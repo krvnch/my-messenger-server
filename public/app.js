@@ -27,6 +27,11 @@ const authSwitchLink = document.getElementById("auth-switch-link");
 const messagesEl = document.getElementById("messages");
 const messageForm = document.getElementById("message-form");
 const messageInput = document.getElementById("message-input");
+const attachBtn = document.getElementById("attach-btn");
+const fileInput = document.getElementById("file-input");
+const attachmentPreview = document.getElementById("attachment-preview");
+const attachmentPreviewName = document.getElementById("attachment-preview-name");
+const attachmentRemoveBtn = document.getElementById("attachment-remove-btn");
 const onlineList = document.getElementById("online-list");
 const onlineCount = document.getElementById("online-count");
 const meAvatarEl = document.getElementById("me-avatar");
@@ -112,7 +117,14 @@ function addSystemMessage(text) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
-function addMessage(author, text, time) {
+function formatFileSize(bytes) {
+  if (!bytes && bytes !== 0) return "";
+  if (bytes < 1024) return bytes + " Б";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " КБ";
+  return (bytes / (1024 * 1024)).toFixed(1) + " МБ";
+}
+
+function addMessage(author, text, time, attachment) {
   const row = document.createElement("div");
   const isOwn = author === myName;
   row.className = "msg-row " + (isOwn ? "own" : "other");
@@ -123,13 +135,48 @@ function addMessage(author, text, time) {
   const meta = document.createElement("div");
   meta.className = "msg-meta";
   meta.textContent = `${avatar ? avatar + " " : ""}${namePart} · ${formatTime(time)}`;
-
-  const bubble = document.createElement("div");
-  bubble.className = "bubble";
-  bubble.textContent = text;
-
   row.appendChild(meta);
-  row.appendChild(bubble);
+
+  if (attachment) {
+    if (attachment.mimeType && attachment.mimeType.startsWith("image/")) {
+      const img = document.createElement("img");
+      img.className = "msg-image";
+      img.src = attachment.url;
+      img.alt = attachment.name || "изображение";
+      img.addEventListener("click", () => window.open(attachment.url, "_blank"));
+      row.appendChild(img);
+    } else {
+      const link = document.createElement("a");
+      link.className = "msg-file-chip";
+      link.href = attachment.url;
+      link.target = "_blank";
+      link.rel = "noopener";
+      const icon = document.createElement("span");
+      icon.className = "file-icon";
+      icon.textContent = "📄";
+      const fileMeta = document.createElement("span");
+      fileMeta.className = "file-meta";
+      const fileName = document.createElement("span");
+      fileName.className = "file-name";
+      fileName.textContent = attachment.name || "Файл";
+      const fileSize = document.createElement("span");
+      fileSize.className = "file-size";
+      fileSize.textContent = formatFileSize(attachment.size);
+      fileMeta.appendChild(fileName);
+      fileMeta.appendChild(fileSize);
+      link.appendChild(icon);
+      link.appendChild(fileMeta);
+      row.appendChild(link);
+    }
+  }
+
+  if (text) {
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
+    row.appendChild(bubble);
+  }
+
   messagesEl.appendChild(row);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -137,10 +184,10 @@ function addMessage(author, text, time) {
 function renderCurrentView() {
   messagesEl.innerHTML = "";
   if (currentView.type === "channel") {
-    channelHistory.forEach((m) => addMessage(m.author, m.text, m.time));
+    channelHistory.forEach((m) => addMessage(m.author, m.text, m.time, m.attachment));
   } else {
     const list = dmCache.get(currentView.withUser) || [];
-    list.forEach((m) => addMessage(m.from, m.text, m.time));
+    list.forEach((m) => addMessage(m.from, m.text, m.time, m.attachment));
   }
 }
 
@@ -375,7 +422,7 @@ function connectWithToken(token) {
 
   socket.on("message:new", (msg) => {
     channelHistory.push(msg);
-    if (currentView.type === "channel") addMessage(msg.author, msg.text, msg.time);
+    if (currentView.type === "channel") addMessage(msg.author, msg.text, msg.time, msg.attachment);
   });
 
   socket.on("dm:history", ({ withUser, messages }) => {
@@ -391,7 +438,7 @@ function connectWithToken(token) {
     dmCache.get(other).push(msg);
 
     if (currentView.type === "dm" && currentView.withUser === other) {
-      addMessage(msg.from, msg.text, msg.time);
+      addMessage(msg.from, msg.text, msg.time, msg.attachment);
     }
   });
 
@@ -423,17 +470,68 @@ if (savedToken) {
 
 channelGeneralEl.addEventListener("click", switchToChannel);
 
+let pendingAttachment = null;
+const MAX_CLIENT_FILE_SIZE = 15 * 1024 * 1024; // 15 МБ — должно совпадать с лимитом на сервере
+
+attachBtn.addEventListener("click", () => fileInput.click());
+
+fileInput.addEventListener("change", async () => {
+  const file = fileInput.files[0];
+  fileInput.value = "";
+  if (!file) return;
+
+  if (file.size > MAX_CLIENT_FILE_SIZE) {
+    addSystemMessage("Файл слишком большой (максимум 15 МБ)");
+    return;
+  }
+
+  attachmentPreviewName.textContent = `Загрузка: ${file.name}...`;
+  attachmentPreview.classList.remove("hidden");
+
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + localStorage.getItem("token") },
+      body: formData,
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      attachmentPreview.classList.add("hidden");
+      addSystemMessage(data.error || "Не удалось загрузить файл");
+      return;
+    }
+
+    pendingAttachment = data;
+    attachmentPreviewName.textContent = `📎 ${data.name}`;
+  } catch (err) {
+    attachmentPreview.classList.add("hidden");
+    addSystemMessage("Не удалось загрузить файл");
+  }
+});
+
+attachmentRemoveBtn.addEventListener("click", () => {
+  pendingAttachment = null;
+  attachmentPreview.classList.add("hidden");
+});
+
 messageForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const text = messageInput.value.trim();
-  if (!text || !socket) return;
+  if (!text && !pendingAttachment) return;
+  if (!socket) return;
 
   if (currentView.type === "channel") {
-    socket.emit("message:send", text);
+    socket.emit("message:send", { text, attachment: pendingAttachment });
   } else {
-    socket.emit("dm:send", { to: currentView.withUser, text });
+    socket.emit("dm:send", { to: currentView.withUser, text, attachment: pendingAttachment });
   }
+
   messageInput.value = "";
+  pendingAttachment = null;
+  attachmentPreview.classList.add("hidden");
 });
 
 // ================= Звонки (WebRTC) =================
