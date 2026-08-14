@@ -91,7 +91,14 @@
 
       <div id="messages" class="messages"></div>
 
+      <div id="attachment-preview" class="attachment-preview hidden">
+        <span id="attachment-preview-name"></span>
+        <button id="attachment-remove-btn" type="button" aria-label="Убрать вложение">✕</button>
+      </div>
+
       <form id="message-form" class="message-form">
+        <button id="attach-btn" type="button" class="attach-btn" aria-label="Прикрепить файл">📎</button>
+        <input id="file-input" type="file" class="hidden" />
         <input id="message-input" class="message-input" type="text" placeholder="Написать в #general" autocomplete="off" maxlength="1000" />
         <button type="submit" class="send-btn" aria-label="Отправить">➤</button>
       </form>
