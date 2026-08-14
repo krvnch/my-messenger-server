@@ -47,6 +47,14 @@ function findSocketByUsername(username) {
   return null;
 }
 
+// --- Звонки: сервер только передаёт сигналинг (SDP/ICE), само аудио/видео идёт
+// напрямую между браузерами по WebRTC и через сервер не проходит.
+const channelCallParticipants = new Map(); // socket.id -> username (кто сейчас в звонке #general)
+
+function broadcastChannelCallCount() {
+  io.to(CHANNEL).emit("call:room:count", channelCallParticipants.size);
+}
+
 // --- База данных ---
 let messagesCollection = null;
 let dmCollection = null;
@@ -173,6 +181,7 @@ io.on("connection", (socket) => {
     socket.join(CHANNEL);
 
     socket.emit("messages:history", messages);
+    socket.emit("call:room:count", channelCallParticipants.size);
     broadcastUserList();
 
     io.to(CHANNEL).emit("system:message", `${username} присоединился(-ась) к чату`);
@@ -244,9 +253,71 @@ io.on("connection", (socket) => {
     }
   });
 
+  // --- Звонки в личные сообщения: приглашение / ответ / завершение ---
+  socket.on("call:dm:invite", ({ to }) => {
+    if (!socket.username) return;
+    const targetSocketId = findSocketByUsername(to);
+    if (!targetSocketId) {
+      socket.emit("call:dm:unavailable", { to });
+      return;
+    }
+    io.to(targetSocketId).emit("call:dm:incoming", { from: socket.username });
+  });
+
+  socket.on("call:dm:accept", ({ to }) => {
+    const callerSocketId = findSocketByUsername(to);
+    if (callerSocketId) io.to(callerSocketId).emit("call:dm:accepted", { from: socket.username });
+  });
+
+  socket.on("call:dm:decline", ({ to }) => {
+    const callerSocketId = findSocketByUsername(to);
+    if (callerSocketId) io.to(callerSocketId).emit("call:dm:declined", { from: socket.username });
+  });
+
+  socket.on("call:dm:end", ({ to }) => {
+    const targetSocketId = findSocketByUsername(to);
+    if (targetSocketId) io.to(targetSocketId).emit("call:dm:ended", { from: socket.username });
+  });
+
+  socket.on("call:dm:signal", ({ to, data }) => {
+    const targetSocketId = findSocketByUsername(to);
+    if (targetSocketId) io.to(targetSocketId).emit("call:dm:signal", { from: socket.username, data });
+  });
+
+  // --- Групповой звонок в #general (mesh: сервер только знакомит участников) ---
+  socket.on("call:room:join", () => {
+    if (!socket.username) return;
+    const existing = Array.from(channelCallParticipants.entries())
+      .filter(([id]) => id !== socket.id)
+      .map(([id, username]) => ({ socketId: id, username }));
+
+    channelCallParticipants.set(socket.id, socket.username);
+    socket.emit("call:room:participants", existing);
+    socket.to(CHANNEL).emit("call:room:peer-joined", { socketId: socket.id, username: socket.username });
+    broadcastChannelCallCount();
+  });
+
+  socket.on("call:room:leave", () => {
+    if (!channelCallParticipants.has(socket.id)) return;
+    channelCallParticipants.delete(socket.id);
+    socket.to(CHANNEL).emit("call:room:peer-left", { socketId: socket.id });
+    broadcastChannelCallCount();
+  });
+
+  socket.on("call:room:signal", ({ to, data }) => {
+    io.to(to).emit("call:room:signal", { from: socket.id, username: socket.username, data });
+  });
+
   socket.on("disconnect", () => {
     const user = onlineUsers.get(socket.id);
     onlineUsers.delete(socket.id);
+
+    if (channelCallParticipants.has(socket.id)) {
+      channelCallParticipants.delete(socket.id);
+      socket.to(CHANNEL).emit("call:room:peer-left", { socketId: socket.id });
+      broadcastChannelCallCount();
+    }
+
     if (user) {
       lastSeen.set(user.username, new Date().toISOString());
       broadcastUserList();
