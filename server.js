@@ -5,9 +5,11 @@
 const express = require("express");
 const http = require("http");
 const path = require("path");
+const fs = require("fs");
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const multer = require("multer");
 const { Server } = require("socket.io");
 const { MongoClient } = require("mongodb");
 
@@ -24,6 +26,54 @@ const io = new Server(server, {
 });
 
 app.use(express.static(path.join(__dirname, "public")));
+
+// --- Загрузка файлов и картинок ---
+// ВАЖНО: файлы сохраняются на диск сервера. На бесплатном тарифе Render диск
+// не постоянный — при каждом передеплое все загруженные файлы удаляются
+// (сами сообщения в базе останутся, но ссылки на файлы станут битыми).
+const UPLOADS_DIR = path.join(__dirname, "uploads");
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+app.use("/uploads", express.static(UPLOADS_DIR));
+
+const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15 МБ
+
+const uploadStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, UPLOADS_DIR),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname || "").slice(0, 10);
+    cb(null, crypto.randomBytes(16).toString("hex") + ext);
+  },
+});
+const upload = multer({ storage: uploadStorage, limits: { fileSize: MAX_FILE_SIZE } });
+
+function requireAuth(req, res, next) {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  if (!token) return res.status(401).json({ error: "Требуется авторизация" });
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.username = payload.username;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: "Недействительный токен" });
+  }
+}
+
+app.post("/api/upload", requireAuth, (req, res) => {
+  upload.single("file")(req, res, (err) => {
+    if (err) {
+      const msg = err.code === "LIMIT_FILE_SIZE" ? "Файл больше 15 МБ" : "Не удалось загрузить файл";
+      return res.status(400).json({ error: msg });
+    }
+    if (!req.file) return res.status(400).json({ error: "Файл не получен" });
+    res.json({
+      url: "/uploads/" + req.file.filename,
+      name: req.file.originalname,
+      mimeType: req.file.mimetype,
+      size: req.file.size,
+    });
+  });
+});
 
 // Один общий канал "general" для прототипа
 const CHANNEL = "general";
@@ -194,12 +244,14 @@ io.on("connection", (socket) => {
     broadcastUserList();
   });
 
-  socket.on("message:send", (text) => {
+  socket.on("message:send", ({ text, attachment } = {}) => {
     const author = socket.username || "Аноним";
+    if (!text && !attachment) return;
     const message = {
       id: Date.now() + "-" + Math.random().toString(36).slice(2, 8),
       author,
-      text,
+      text: text || "",
+      attachment: attachment || null,
       time: new Date().toISOString(),
     };
     messages.push(message);
@@ -228,15 +280,16 @@ io.on("connection", (socket) => {
     });
   });
 
-  socket.on("dm:send", ({ to, text }) => {
+  socket.on("dm:send", ({ to, text, attachment }) => {
     const from = socket.username;
-    if (!from || !text) return;
+    if (!from || (!text && !attachment)) return;
 
     const message = {
       id: Date.now() + "-" + Math.random().toString(36).slice(2, 8),
       from,
       to,
-      text,
+      text: text || "",
+      attachment: attachment || null,
       time: new Date().toISOString(),
     };
 
