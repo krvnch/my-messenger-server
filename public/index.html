@@ -49,6 +49,7 @@
         <div id="channel-general" class="channel active">
           <span class="channel-hash">#</span> general
         </div>
+        <button id="channel-call-btn" class="join-call-btn">🎤 Присоединиться к звонку</button>
       </div>
 
       <div class="online-section">
@@ -82,7 +83,10 @@
             <span class="channel-hash">#</span> general
           </div>
         </div>
-        <div id="chat-header-status" class="chat-header-status"></div>
+        <div class="chat-header-right">
+          <button id="dm-call-btn" class="call-trigger-btn hidden" title="Позвонить">📞</button>
+          <div id="chat-header-status" class="chat-header-status"></div>
+        </div>
       </header>
 
       <div id="messages" class="messages"></div>
@@ -93,6 +97,35 @@
       </form>
     </main>
   </div>
+
+  <!-- Входящий звонок -->
+  <div id="incoming-call-modal" class="incoming-call-modal hidden">
+    <div class="incoming-call-card">
+      <div id="incoming-call-avatar" class="incoming-call-avatar"></div>
+      <div id="incoming-call-name" class="incoming-call-name"></div>
+      <div class="incoming-call-sub">Входящий звонок</div>
+      <div class="incoming-call-actions">
+        <button id="decline-call-btn" class="call-action-btn decline" aria-label="Отклонить">✕</button>
+        <button id="accept-call-btn" class="call-action-btn accept" aria-label="Принять">✓</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Панель активного звонка -->
+  <div id="call-bar" class="call-bar hidden">
+    <div class="call-bar-info">
+      <div id="call-bar-title" class="call-bar-title"></div>
+      <div id="call-bar-participants" class="call-bar-participants"></div>
+    </div>
+    <div class="call-bar-controls">
+      <button id="toggle-mute-btn" class="call-control-btn" title="Микрофон">🎤</button>
+      <button id="toggle-screen-btn" class="call-control-btn" title="Показ экрана">🖥️</button>
+      <button id="end-call-btn" class="call-control-btn end" title="Завершить звонок">📞</button>
+    </div>
+  </div>
+
+  <!-- Сюда динамически добавляются <audio> для голосов собеседников -->
+  <div id="remote-audio-container" class="hidden"></div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="app.js"></script>
