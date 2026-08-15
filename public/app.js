@@ -1811,7 +1811,7 @@ async function startRecording() {
     return;
   }
   try {
-    recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recordingStream = await navigator.mediaDevices.getUserMedia({ audio: buildMicConstraints() });
   } catch (err) {
     addSystemMessage("Не удалось получить доступ к микрофону");
     return;
@@ -2207,12 +2207,22 @@ micSelect.addEventListener("change", () => {
   selectedMicId = micSelect.value;
   localStorage.setItem("selectedMicId", selectedMicId);
 });
+function applySelectedSpeakerToAudio(audioEl) {
+  if (!audioEl || !("setSinkId" in audioEl) || !selectedSpeakerId) return Promise.resolve();
+  return audioEl.setSinkId(selectedSpeakerId).catch(() => {});
+}
+
+function applySelectedSpeaker() {
+  applySelectedSpeakerToAudio(micTestAudioEl);
+  remoteAudioContainer.querySelectorAll("audio").forEach((audioEl) => {
+    applySelectedSpeakerToAudio(audioEl);
+  });
+}
+
 speakerSelect.addEventListener("change", async () => {
   selectedSpeakerId = speakerSelect.value;
   localStorage.setItem("selectedSpeakerId", selectedSpeakerId);
-  if (micTestAudioEl.setSinkId && selectedSpeakerId) {
-    try { await micTestAudioEl.setSinkId(selectedSpeakerId); } catch (e) {}
-  }
+  await applySelectedSpeaker();
 });
 
 // ----- Проверка микрофона (слышишь себя + индикатор уровня) -----
@@ -2237,9 +2247,7 @@ async function startMicTest() {
   const dest = micTestAudioCtx.createMediaStreamDestination();
   source.connect(dest);
   micTestAudioEl.srcObject = dest.stream;
-  if (micTestAudioEl.setSinkId && selectedSpeakerId) {
-    try { await micTestAudioEl.setSinkId(selectedSpeakerId); } catch (e) {}
-  }
+  await applySelectedSpeakerToAudio(micTestAudioEl);
   micTestAudioEl.play().catch(() => {});
 
   // Индикатор уровня громкости
@@ -2478,6 +2486,7 @@ function playRemoteStream(key, stream) {
     remoteAudioContainer.appendChild(audioEl);
   }
   audioEl.srcObject = stream;
+  applySelectedSpeakerToAudio(audioEl);
 }
 
 function removeRemoteAudio(key) {
