@@ -1,7 +1,7 @@
 let socket = null;
 let myName = "";
-let myAvatar = null;
-let myStatus = "online"; // "online" | "away" | "dnd"
+let myAvatar = localStorage.getItem("myAvatar") || null;
+let myStatus = localStorage.getItem("myStatus") || "online"; // "online" | "away" | "dnd"
 let onlineUsersList = []; // [{ username, avatar, status }]
 let authMode = "login"; // "login" | "register" | "forgot"
 let pendingTempToken = null; // хранит tempToken между шагом пароля и шагом 2FA при входе
@@ -1031,6 +1031,9 @@ saveProfileBtn.addEventListener("click", () => {
   myAvatar = popoverSelectedAvatar;
   myStatus = popoverSelectedStatus;
   autoAway = false;
+  if (myAvatar) localStorage.setItem("myAvatar", myAvatar);
+  else localStorage.removeItem("myAvatar");
+  localStorage.setItem("myStatus", myStatus);
   renderMeAvatar();
   renderMeStatusDot();
   if (socket) socket.emit("user:update", { avatar: myAvatar, status: myStatus });
@@ -1363,7 +1366,6 @@ function connectWithToken(token) {
   registerConnectionHooks();
 
   socket.on("connect", () => {
-    myAvatar = null;
     socket.emit("user:join", { avatar: myAvatar, status: myStatus });
     fetchIceServers();
   });
@@ -1382,6 +1384,7 @@ function connectWithToken(token) {
     // К этому моменту сервер уже принял нас — можно показать приложение
     myName = usernameInput.value.trim() || myName;
     renderMeAvatar();
+    renderMeStatusDot();
     meNameEl.textContent = myName;
     connectScreen.classList.add("hidden");
     app.classList.remove("hidden");
