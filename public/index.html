@@ -92,6 +92,10 @@
           </div>
         </div>
         <div class="chat-header-right">
+          <button id="header-call-btn" class="header-call-btn hidden" title="Войти в войс">
+            <span id="header-call-icon">🎤</span>
+            <span id="header-call-text">Войс</span>
+          </button>
           <button id="group-settings-btn" class="call-trigger-btn hidden" title="Настройки группы">⚙️</button>
           <button id="group-delete-btn" class="call-trigger-btn hidden" title="Удалить группу">🗑️</button>
           <button id="dm-call-btn" class="call-trigger-btn hidden" title="Позвонить">📞</button>
@@ -99,9 +103,28 @@
         </div>
       </header>
 
+      <!-- Приветственный экран: две крупные кнопки вместо сразу открытого чата -->
+      <div id="welcome-panel" class="welcome-panel">
+        <div class="welcome-inner">
+          <div class="welcome-hello">Привет, <span id="welcome-username"></span> 👋</div>
+          <p class="welcome-sub">С чего начнём?</p>
+          <div class="welcome-actions">
+            <button id="welcome-call-btn" class="welcome-action-btn welcome-action-call">
+              <span id="welcome-call-icon" class="welcome-action-icon">🎤</span>
+              <span id="welcome-call-label" class="welcome-action-label">Войти в войс</span>
+              <span id="welcome-call-sub" class="welcome-action-sub hidden"></span>
+            </button>
+            <button id="welcome-chat-btn" class="welcome-action-btn welcome-action-chat">
+              <span class="welcome-action-icon">💬</span>
+              <span class="welcome-action-label">Открыть чат</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div id="typing-indicator" class="typing-indicator hidden"></div>
 
-      <div id="messages" class="messages"></div>
+      <div id="messages" class="messages hidden"></div>
 
       <div id="reply-preview" class="attachment-preview hidden">
         <span id="reply-preview-text"></span>
@@ -120,7 +143,7 @@
         <button id="voice-cancel-btn" type="button" aria-label="Отменить запись">✕</button>
       </div>
 
-      <form id="message-form" class="message-form">
+      <form id="message-form" class="message-form hidden">
         <button id="attach-btn" type="button" class="attach-btn" aria-label="Прикрепить файл">📎</button>
         <input id="file-input" type="file" class="hidden" />
         <input id="message-input" class="message-input" type="text" placeholder="Написать в #general" autocomplete="off" maxlength="1000" />
@@ -128,6 +151,7 @@
         <button type="submit" class="send-btn" aria-label="Отправить">➤</button>
       </form>
     </main>
+
   </div>
 
   <!-- Создание группы -->
@@ -189,16 +213,8 @@
   </div>
 
   <!-- Панель активного звонка -->
-  <!-- Единственная кнопка звонка: центр экрана, всегда на виду -->
-  <div id="mega-call-wrap" class="mega-call-wrap">
-    <button id="channel-call-btn" class="mega-call-btn">
-      <span id="mega-call-icon" class="mega-call-icon">🎤</span>
-      <span id="mega-call-label" class="mega-call-label">Войти в войс</span>
-      <span id="mega-call-sub" class="mega-call-sub hidden"></span>
-    </button>
-  </div>
-
   <div id="call-bar" class="call-bar hidden">
+
     <div class="call-bar-info">
       <div id="call-bar-title" class="call-bar-title"></div>
       <div id="call-bar-participants" class="call-bar-participants"></div>
