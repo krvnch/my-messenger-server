@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Мессенджер</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Экран входа: просто ник, без пароля -->
+  <div id="connect-screen" class="connect-screen">
+    <div class="connect-card">
+      <div class="logo">
+        <span class="logo-dot"></span>
+        <span class="logo-text">Флоу</span>
+      </div>
+      <p id="connect-subtitle" class="connect-subtitle">Как тебя зовут?</p>
+
+      <label class="field-label">Ник</label>
+      <input id="username-input" class="text-input" type="text" placeholder="Например, anya" maxlength="24" autocomplete="username" autofocus />
+
+      <button id="connect-btn" class="primary-btn">Зайти в чат</button>
+      <p id="connect-error" class="connect-error"></p>
+    </div>
+  </div>
+
+  <!-- Основной интерфейс -->
+  <div id="app" class="app hidden">
+    <div id="sidebar-overlay" class="sidebar-overlay hidden"></div>
+
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <span class="logo-dot small"></span>
+        <span class="logo-text small">Флоу</span>
+        <button id="theme-toggle-btn" class="icon-btn" title="Сменить тему">🌙</button>
+        <button id="sound-toggle-btn" class="icon-btn" title="Звук уведомлений">🔔</button>
+        <button id="notif-toggle-btn" class="icon-btn" title="Push-уведомления браузера">🔕</button>
+      </div>
+
+      <div class="channel-list">
+        <div id="channel-general" class="channel active">
+          <span class="channel-hash">#</span> general
+          <span id="channel-unread-badge" class="unread-badge hidden"></span>
+        </div>
+      </div>
+
+      <div class="groups-section">
+        <div class="online-title">Группы <button id="create-group-btn" class="icon-btn small-icon-btn" title="Создать группу">＋</button></div>
+        <ul id="group-list" class="online-list"></ul>
+      </div>
+
+      <div class="online-section">
+        <div class="online-title">В сети — <span id="online-count">0</span></div>
+        <ul id="online-list" class="online-list"></ul>
+        <div class="online-hint">Кликните на человека, чтобы написать лично</div>
+      </div>
+
+      <div class="sidebar-footer">
+        <div id="profile-trigger" class="profile-trigger">
+          <span id="me-avatar" class="avatar"></span>
+          <span id="me-status-dot" class="me-status-dot online"></span>
+          <span id="me-name" class="me-name"></span>
+          <span class="edit-icon">✎</span>
+        </div>
+
+        <div id="profile-popover" class="profile-popover hidden">
+          <label class="field-label">Аватар</label>
+          <div id="avatar-grid" class="avatar-grid"></div>
+
+          <label class="field-label">Статус</label>
+          <div id="status-picker" class="status-picker">
+            <button type="button" class="status-opt" data-status="online"><span class="status-dot online"></span> В сети</button>
+            <button type="button" class="status-opt" data-status="away"><span class="status-dot away"></span> Отошёл</button>
+            <button type="button" class="status-opt" data-status="dnd"><span class="status-dot dnd"></span> Не беспокоить</button>
+          </div>
+
+          <button id="save-profile-btn" class="primary-btn small">Сохранить</button>
+          <button id="logout-btn" class="primary-btn small secondary">Выйти из аккаунта</button>
+        </div>
+      </div>
+    </aside>
+
+    <main class="chat">
+      <header id="chat-header" class="chat-header">
+        <div class="chat-header-left">
+          <button id="sidebar-toggle" class="sidebar-toggle" aria-label="Меню">☰</button>
+          <div class="chat-header-title">
+            <span class="channel-hash">#</span> general
+          </div>
+        </div>
+        <div class="chat-header-right">
+          <button id="group-settings-btn" class="call-trigger-btn hidden" title="Настройки группы">⚙️</button>
+          <button id="group-delete-btn" class="call-trigger-btn hidden" title="Удалить группу">🗑️</button>
+          <button id="dm-call-btn" class="call-trigger-btn hidden" title="Позвонить">📞</button>
+          <div id="chat-header-status" class="chat-header-status"></div>
+        </div>
+      </header>
+
+      <div id="typing-indicator" class="typing-indicator hidden"></div>
+
+      <div id="messages" class="messages"></div>
+
+      <div id="reply-preview" class="attachment-preview hidden">
+        <span id="reply-preview-text"></span>
+        <button id="reply-remove-btn" type="button" aria-label="Отменить ответ">✕</button>
+      </div>
+
+      <div id="attachment-preview" class="attachment-preview hidden">
+        <span id="attachment-preview-name"></span>
+        <button id="attachment-remove-btn" type="button" aria-label="Убрать вложение">✕</button>
+      </div>
+
+      <div id="voice-recording-bar" class="attachment-preview hidden">
+        <span class="recording-dot"></span>
+        <span id="voice-recording-time">0:00</span>
+        <span class="recording-hint">Идёт запись...</span>
+        <button id="voice-cancel-btn" type="button" aria-label="Отменить запись">✕</button>
+      </div>
+
+      <form id="message-form" class="message-form">
+        <button id="attach-btn" type="button" class="attach-btn" aria-label="Прикрепить файл">📎</button>
+        <input id="file-input" type="file" class="hidden" />
+        <input id="message-input" class="message-input" type="text" placeholder="Написать в #general" autocomplete="off" maxlength="1000" />
+        <button id="voice-record-btn" type="button" class="attach-btn" aria-label="Голосовое сообщение">🎙️</button>
+        <button type="submit" class="send-btn" aria-label="Отправить">➤</button>
+      </form>
+    </main>
+  </div>
+
+  <!-- Создание группы -->
+  <div id="create-group-modal" class="incoming-call-modal hidden">
+    <div class="incoming-call-card recovery-card">
+      <div class="recovery-title">Новая группа</div>
+      <label class="field-label">Название</label>
+      <input id="group-name-input" class="text-input" type="text" placeholder="Например, Проект X" maxlength="40" />
+      <label class="field-label">Описание (необязательно)</label>
+      <input id="group-description-input" class="text-input" type="text" placeholder="О чём эта группа" maxlength="200" />
+      <label class="field-label">Аватар группы</label>
+      <div id="group-avatar-grid" class="avatar-grid"></div>
+      <label class="field-label">Участники</label>
+      <div id="group-members-list" class="avatar-grid group-members-list"></div>
+      <div class="incoming-call-actions-row">
+        <button id="group-create-cancel-btn" class="primary-btn small secondary">Отмена</button>
+        <button id="group-create-confirm-btn" class="primary-btn small">Создать</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Настройки группы -->
+  <div id="group-settings-modal" class="incoming-call-modal hidden">
+    <div class="incoming-call-card recovery-card">
+      <div class="recovery-title">Настройки группы</div>
+      <label class="field-label">Название</label>
+      <input id="group-edit-name-input" class="text-input" type="text" maxlength="40" />
+      <label class="field-label">Описание</label>
+      <input id="group-edit-description-input" class="text-input" type="text" maxlength="200" />
+      <label class="field-label">Аватар группы</label>
+      <div id="group-edit-avatar-grid" class="avatar-grid"></div>
+
+      <label class="field-label">Участники</label>
+      <ul id="group-edit-members-list" class="online-list group-edit-members-list"></ul>
+
+      <div id="group-edit-add-section">
+        <label class="field-label">Добавить участника</label>
+        <div id="group-edit-add-list" class="avatar-grid group-members-list"></div>
+      </div>
+
+      <div class="incoming-call-actions-row">
+        <button id="group-settings-close-btn" class="primary-btn small secondary">Закрыть</button>
+        <button id="group-settings-save-btn" class="primary-btn small">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Входящий звонок -->
+  <div id="incoming-call-modal" class="incoming-call-modal hidden">
+    <div class="incoming-call-card">
+      <div id="incoming-call-avatar" class="incoming-call-avatar"></div>
+      <div id="incoming-call-name" class="incoming-call-name"></div>
+      <div class="incoming-call-sub">Входящий звонок</div>
+      <div class="incoming-call-actions">
+        <button id="decline-call-btn" class="call-action-btn decline" aria-label="Отклонить">✕</button>
+        <button id="accept-call-btn" class="call-action-btn accept" aria-label="Принять">✓</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Панель активного звонка -->
+  <!-- Единственная кнопка звонка: центр экрана, всегда на виду -->
+  <div id="mega-call-wrap" class="mega-call-wrap">
+    <button id="channel-call-btn" class="mega-call-btn">
+      <span id="mega-call-icon" class="mega-call-icon">🎤</span>
+      <span id="mega-call-label" class="mega-call-label">Войти в войс</span>
+      <span id="mega-call-sub" class="mega-call-sub hidden"></span>
+    </button>
+  </div>
+
+  <div id="call-bar" class="call-bar hidden">
+    <div class="call-bar-info">
+      <div id="call-bar-title" class="call-bar-title"></div>
+      <div id="call-bar-participants" class="call-bar-participants"></div>
+    </div>
+    <div class="call-bar-controls">
+      <button id="toggle-mute-btn" class="call-control-btn" title="Микрофон">🎤</button>
+      <button id="toggle-screen-btn" class="call-control-btn" title="Показ экрана">🖥️</button>
+      <button id="end-call-btn" class="call-control-btn end" title="Завершить звонок">📞</button>
+    </div>
+  </div>
+
+  <!-- Сюда динамически добавляются <audio> для голосов собеседников -->
+  <div id="remote-audio-container" class="hidden"></div>
+
+  <!-- Просмотр демонстрации экрана собеседника -->
+  <div id="screen-share-viewer" class="screen-share-viewer hidden">
+    <div class="screen-share-topbar">
+      <span id="screen-share-label" class="screen-share-label"></span>
+      <button id="screen-share-close-btn" class="screen-share-close-btn" aria-label="Свернуть">✕</button>
+    </div>
+    <video id="screen-share-video" class="screen-share-video" autoplay playsinline></video>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
