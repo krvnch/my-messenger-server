@@ -10,20 +10,55 @@
 </head>
 <body>
 
-  <!-- Экран входа: просто ник, без пароля -->
+  <!-- Экран входа / регистрации / восстановления пароля -->
   <div id="connect-screen" class="connect-screen">
     <div class="connect-card">
       <div class="logo">
         <span class="logo-dot"></span>
         <span class="logo-text">Флоу</span>
       </div>
-      <p id="connect-subtitle" class="connect-subtitle">Как тебя зовут?</p>
+      <p id="connect-subtitle" class="connect-subtitle">Войдите в свой аккаунт</p>
 
-      <label class="field-label">Ник</label>
-      <input id="username-input" class="text-input" type="text" placeholder="Например, anya" maxlength="24" autocomplete="username" autofocus />
+      <label class="field-label">Имя пользователя</label>
+      <input id="username-input" class="text-input" type="text" placeholder="Например, anya" maxlength="24" autocomplete="username" />
 
-      <button id="connect-btn" class="primary-btn">Зайти в чат</button>
+      <div id="password-field-group">
+        <label class="field-label">Пароль</label>
+        <input id="password-input" class="text-input" type="password" placeholder="Не менее 6 символов" maxlength="72" autocomplete="current-password" />
+      </div>
+
+      <div id="recovery-field-group" class="hidden">
+        <label class="field-label">Код восстановления</label>
+        <input id="recovery-code-input" class="text-input" type="text" placeholder="XXXX-XXXX-XXXX" maxlength="14" autocomplete="off" />
+        <label class="field-label">Новый пароль</label>
+        <input id="new-password-input" class="text-input" type="password" placeholder="Не менее 6 символов" maxlength="72" autocomplete="new-password" />
+      </div>
+
+      <div id="twofa-field-group" class="hidden">
+        <label class="field-label">Код из приложения-аутентификатора</label>
+        <input id="twofa-code-input" class="text-input" type="text" inputmode="numeric" placeholder="123456" maxlength="6" autocomplete="one-time-code" />
+      </div>
+
+      <button id="connect-btn" class="primary-btn">Войти</button>
       <p id="connect-error" class="connect-error"></p>
+
+      <p class="auth-switch">
+        <span id="auth-switch-text">Нет аккаунта?</span>
+        <a id="auth-switch-link" href="#">Зарегистрироваться</a>
+      </p>
+      <p class="auth-switch">
+        <a id="forgot-password-link" href="#">Забыли пароль?</a>
+      </p>
+    </div>
+  </div>
+
+  <!-- Модалка с кодом восстановления после регистрации -->
+  <div id="recovery-code-modal" class="incoming-call-modal hidden">
+    <div class="incoming-call-card recovery-card">
+      <div class="recovery-title">Сохраните код восстановления</div>
+      <p class="recovery-sub">Он понадобится, если вы забудете пароль. Показывается только один раз — сервер его не хранит в открытом виде.</p>
+      <div id="recovery-code-display" class="recovery-code-display"></div>
+      <button id="recovery-code-ok-btn" class="primary-btn small">Я сохранил(а) код</button>
     </div>
   </div>
 
@@ -38,6 +73,7 @@
         <button id="theme-toggle-btn" class="icon-btn" title="Сменить тему">🌙</button>
         <button id="sound-toggle-btn" class="icon-btn" title="Звук уведомлений">🔔</button>
         <button id="notif-toggle-btn" class="icon-btn" title="Push-уведомления браузера">🔕</button>
+        <button id="audio-settings-btn" class="icon-btn" title="Настройки звука">🎚️</button>
       </div>
 
       <div class="channel-list">
@@ -45,6 +81,7 @@
           <span class="channel-hash">#</span> general
           <span id="channel-unread-badge" class="unread-badge hidden"></span>
         </div>
+        <button id="channel-call-btn" class="join-call-btn">🎤 Присоединиться к звонку</button>
       </div>
 
       <div class="groups-section">
@@ -78,6 +115,7 @@
           </div>
 
           <button id="save-profile-btn" class="primary-btn small">Сохранить</button>
+          <button id="open-security-btn" class="primary-btn small secondary">Пароль и безопасность</button>
           <button id="logout-btn" class="primary-btn small secondary">Выйти из аккаунта</button>
         </div>
       </div>
@@ -92,10 +130,6 @@
           </div>
         </div>
         <div class="chat-header-right">
-          <button id="header-call-btn" class="header-call-btn hidden" title="Войти в войс">
-            <span id="header-call-icon">🎤</span>
-            <span id="header-call-text">Войс</span>
-          </button>
           <button id="group-settings-btn" class="call-trigger-btn hidden" title="Настройки группы">⚙️</button>
           <button id="group-delete-btn" class="call-trigger-btn hidden" title="Удалить группу">🗑️</button>
           <button id="dm-call-btn" class="call-trigger-btn hidden" title="Позвонить">📞</button>
@@ -103,28 +137,9 @@
         </div>
       </header>
 
-      <!-- Приветственный экран: две крупные кнопки вместо сразу открытого чата -->
-      <div id="welcome-panel" class="welcome-panel">
-        <div class="welcome-inner">
-          <div class="welcome-hello">Привет, <span id="welcome-username"></span> 👋</div>
-          <p class="welcome-sub">С чего начнём?</p>
-          <div class="welcome-actions">
-            <button id="welcome-call-btn" class="welcome-action-btn welcome-action-call">
-              <span id="welcome-call-icon" class="welcome-action-icon">🎤</span>
-              <span id="welcome-call-label" class="welcome-action-label">Войти в войс</span>
-              <span id="welcome-call-sub" class="welcome-action-sub hidden"></span>
-            </button>
-            <button id="welcome-chat-btn" class="welcome-action-btn welcome-action-chat">
-              <span class="welcome-action-icon">💬</span>
-              <span class="welcome-action-label">Открыть чат</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
       <div id="typing-indicator" class="typing-indicator hidden"></div>
 
-      <div id="messages" class="messages hidden"></div>
+      <div id="messages" class="messages"></div>
 
       <div id="reply-preview" class="attachment-preview hidden">
         <span id="reply-preview-text"></span>
@@ -143,7 +158,7 @@
         <button id="voice-cancel-btn" type="button" aria-label="Отменить запись">✕</button>
       </div>
 
-      <form id="message-form" class="message-form hidden">
+      <form id="message-form" class="message-form">
         <button id="attach-btn" type="button" class="attach-btn" aria-label="Прикрепить файл">📎</button>
         <input id="file-input" type="file" class="hidden" />
         <input id="message-input" class="message-input" type="text" placeholder="Написать в #general" autocomplete="off" maxlength="1000" />
@@ -151,7 +166,6 @@
         <button type="submit" class="send-btn" aria-label="Отправить">➤</button>
       </form>
     </main>
-
   </div>
 
   <!-- Создание группы -->
@@ -199,6 +213,70 @@
     </div>
   </div>
 
+  <!-- Пароль и безопасность -->
+  <div id="security-modal" class="incoming-call-modal hidden">
+    <div class="incoming-call-card recovery-card">
+      <div class="recovery-title">Пароль и безопасность</div>
+
+      <label class="field-label">Текущий пароль</label>
+      <input id="current-password-input" class="text-input" type="password" autocomplete="current-password" />
+      <label class="field-label">Новый пароль</label>
+      <input id="change-password-input" class="text-input" type="password" placeholder="Не менее 6 символов" autocomplete="new-password" />
+      <button id="change-password-btn" class="primary-btn small">Сменить пароль</button>
+      <p id="security-error" class="connect-error"></p>
+
+      <div class="security-divider"></div>
+
+      <div id="twofa-disabled-block">
+        <p class="recovery-sub">Двухфакторная авторизация (2FA) не включена.</p>
+        <button id="twofa-setup-btn" class="primary-btn small secondary">Включить 2FA</button>
+      </div>
+
+      <div id="twofa-setup-block" class="hidden">
+        <p class="recovery-sub">Отсканируйте QR-код в приложении-аутентификаторе (Google Authenticator, Authy и т.п.), затем введите код для подтверждения.</p>
+        <img id="twofa-qr-img" class="twofa-qr" alt="QR-код 2FA" />
+        <p id="twofa-secret-text" class="twofa-secret"></p>
+        <input id="twofa-confirm-input" class="text-input" type="text" inputmode="numeric" placeholder="123456" maxlength="6" />
+        <button id="twofa-confirm-btn" class="primary-btn small">Подтвердить и включить</button>
+      </div>
+
+      <div id="twofa-enabled-block" class="hidden">
+        <p class="recovery-sub">Двухфакторная авторизация включена ✅</p>
+        <input id="twofa-disable-password-input" class="text-input" type="password" placeholder="Пароль для отключения" />
+        <button id="twofa-disable-btn" class="primary-btn small secondary">Отключить 2FA</button>
+      </div>
+
+      <button id="security-close-btn" class="primary-btn small secondary">Закрыть</button>
+    </div>
+  </div>
+
+  <!-- Настройки звука (микрофон/динамики) -->
+  <div id="audio-settings-modal" class="incoming-call-modal hidden">
+    <div class="incoming-call-card recovery-card">
+      <div class="recovery-title">Настройки звука</div>
+
+      <label class="field-label">Микрофон</label>
+      <select id="mic-select" class="text-input"></select>
+
+      <label class="field-label">Динамики</label>
+      <select id="speaker-select" class="text-input"></select>
+
+      <label class="field-label">Качество звука</label>
+      <div id="audio-quality-picker" class="status-picker">
+        <button type="button" class="status-opt" data-quality="voice">🎙️ Голос (эконом трафика)</button>
+        <button type="button" class="status-opt" data-quality="hd">✨ Высокое (по умолчанию)</button>
+        <button type="button" class="status-opt" data-quality="studio">🎧 Студийное (без обработки)</button>
+      </div>
+      <p class="recovery-sub" id="audio-quality-hint"></p>
+
+      <button id="mic-test-btn" class="primary-btn small secondary">Проверить микрофон</button>
+      <p class="recovery-sub">Во время проверки вы услышите себя с небольшой задержкой — наденьте наушники, иначе будет эхо.</p>
+      <div class="mic-level-track"><div id="mic-level-fill" class="mic-level-fill"></div></div>
+
+      <button id="audio-settings-close-btn" class="primary-btn small secondary">Закрыть</button>
+    </div>
+  </div>
+
   <!-- Входящий звонок -->
   <div id="incoming-call-modal" class="incoming-call-modal hidden">
     <div class="incoming-call-card">
@@ -214,7 +292,6 @@
 
   <!-- Панель активного звонка -->
   <div id="call-bar" class="call-bar hidden">
-
     <div class="call-bar-info">
       <div id="call-bar-title" class="call-bar-title"></div>
       <div id="call-bar-participants" class="call-bar-participants"></div>
@@ -228,15 +305,6 @@
 
   <!-- Сюда динамически добавляются <audio> для голосов собеседников -->
   <div id="remote-audio-container" class="hidden"></div>
-
-  <!-- Просмотр демонстрации экрана собеседника -->
-  <div id="screen-share-viewer" class="screen-share-viewer hidden">
-    <div class="screen-share-topbar">
-      <span id="screen-share-label" class="screen-share-label"></span>
-      <button id="screen-share-close-btn" class="screen-share-close-btn" aria-label="Свернуть">✕</button>
-    </div>
-    <video id="screen-share-video" class="screen-share-video" autoplay playsinline></video>
-  </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="app.js"></script>
