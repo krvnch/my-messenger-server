@@ -1623,6 +1623,31 @@ resetIdleTimer();
 
 channelGeneralEl.addEventListener("click", switchToChannel);
 
+const voiceEnterBtn = document.getElementById("voice-enter-btn");
+const chatOpenBtn = document.getElementById("chat-open-btn");
+const membersPanelBtn = document.getElementById("members-panel-btn");
+
+if (voiceEnterBtn) {
+  voiceEnterBtn.addEventListener("click", () => {
+    closeSidebar();
+    if (channelCallBtn) channelCallBtn.click();
+  });
+}
+
+if (chatOpenBtn) {
+  chatOpenBtn.addEventListener("click", () => {
+    closeSidebar();
+    switchToChannel();
+  });
+}
+
+if (membersPanelBtn) {
+  membersPanelBtn.addEventListener("click", () => {
+    if (sidebarEl.classList.contains("open")) closeSidebar();
+    else openSidebar();
+  });
+}
+
 let pendingAttachment = null;
 const MAX_CLIENT_FILE_SIZE = 15 * 1024 * 1024; // 15 МБ — должно совпадать с лимитом на сервере
 
