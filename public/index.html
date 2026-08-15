@@ -22,9 +22,9 @@
       <label class="field-label">Имя пользователя</label>
       <input id="username-input" class="text-input" type="text" placeholder="Например, anya" maxlength="24" autocomplete="username" />
 
-      <div id="password-field-group">
+      <div id="password-field-group" class="hidden">
         <label class="field-label">Пароль</label>
-        <input id="password-input" class="text-input" type="password" placeholder="Не менее 6 символов" maxlength="72" autocomplete="current-password" />
+        <input id="password-input" class="text-input" type="password" placeholder="Не менее 6 символов" maxlength="72" autocomplete="username" />
       </div>
 
       <div id="recovery-field-group" class="hidden">
@@ -39,14 +39,14 @@
         <input id="twofa-code-input" class="text-input" type="text" inputmode="numeric" placeholder="123456" maxlength="6" autocomplete="one-time-code" />
       </div>
 
-      <button id="connect-btn" class="primary-btn">Войти</button>
+      <button id="connect-btn" class="primary-btn">Войти в чат</button>
       <p id="connect-error" class="connect-error"></p>
 
       <p class="auth-switch">
         <span id="auth-switch-text">Нет аккаунта?</span>
         <a id="auth-switch-link" href="#">Зарегистрироваться</a>
       </p>
-      <p class="auth-switch">
+      <p class="auth-switch hidden">
         <a id="forgot-password-link" href="#">Забыли пароль?</a>
       </p>
     </div>
@@ -115,7 +115,7 @@
           </div>
 
           <button id="save-profile-btn" class="primary-btn small">Сохранить</button>
-          <button id="open-security-btn" class="primary-btn small secondary">Пароль и безопасность</button>
+          <button id="open-security-btn" class="primary-btn small secondary hidden">Пароль и безопасность</button>
           <button id="logout-btn" class="primary-btn small secondary">Выйти из аккаунта</button>
         </div>
       </div>

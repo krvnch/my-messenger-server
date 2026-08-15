@@ -348,11 +348,7 @@ function makeToken(username) {
 // Ник может состоять из букв (в т.ч. кириллицы), цифр, "_" и "-"
 const USERNAME_RE = /^[a-zA-Zа-яА-ЯёЁ0-9_-]{2,24}$/;
 
-// --- REST: вход по нику, без пароля — приложение только для своих друзей.
-// Если ник уже кем-то занят прямо сейчас (есть активный сокет) — просим выбрать другой,
-// чтобы не было путаницы в чате "кто есть кто". Если ник свободен (даже если уже
-// существовал раньше) — просто входим под ним, история переписки восстановится.
-app.post("/api/join", authLimiter, async (req, res) => {
+async function joinUser(req, res) {
   try {
     const { username } = req.body || {};
     if (!username || typeof username !== "string" || !USERNAME_RE.test(username)) {
@@ -372,6 +368,27 @@ app.post("/api/join", authLimiter, async (req, res) => {
     console.error("Ошибка входа:", err);
     res.status(500).json({ error: "Внутренняя ошибка сервера" });
   }
+}
+
+// --- REST: вход по нику, без пароля — приложение только для своих друзей.
+// Если ник уже кем-то занят прямо сейчас (есть активный сокет) — просим выбрать другой,
+// чтобы не было путаницы в чате "кто есть кто". Если ник свободен (даже если уже
+// существовал раньше) — просто входим под ним, история переписки восстановится.
+app.post("/api/join", authLimiter, joinUser);
+
+// Совместимость со старым клиентом: логин и регистрация через ник без пароля.
+app.post("/api/login", authLimiter, async (req, res) => {
+  const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
+  if (!username) return res.status(400).json({ error: "Укажите ник" });
+  req.body = { username };
+  return joinUser(req, res);
+});
+
+app.post("/api/register", authLimiter, async (req, res) => {
+  const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
+  if (!username) return res.status(400).json({ error: "Укажите ник" });
+  req.body = { username };
+  return joinUser(req, res);
 });
 
 // --- Группы: REST для списка (создание/удаление идут через сокеты, т.к. требуют realtime-уведомлений) ---

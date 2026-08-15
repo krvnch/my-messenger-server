@@ -1221,41 +1221,38 @@ function setAuthMode(mode) {
   pendingTempToken = null;
   twofaFieldGroup.classList.add("hidden");
   usernameInput.disabled = false;
+  passwordFieldGroup.classList.add("hidden");
+  recoveryFieldGroup.classList.add("hidden");
+  forgotPasswordLink.parentElement.classList.add("hidden");
+
   if (mode === "login") {
-    connectSubtitle.textContent = "Войдите в свой аккаунт";
-    connectBtn.textContent = "Войти";
-    authSwitchText.textContent = "Нет аккаунта?";
-    authSwitchLink.textContent = "Зарегистрироваться";
-    passwordInput.setAttribute("autocomplete", "current-password");
-    passwordFieldGroup.classList.remove("hidden");
-    recoveryFieldGroup.classList.add("hidden");
-    forgotPasswordLink.parentElement.classList.remove("hidden");
+    connectSubtitle.textContent = "Войдите под ником";
+    connectBtn.textContent = "Войти в чат";
+    authSwitchText.textContent = "Нет ника?";
+    authSwitchLink.textContent = "Создать";
+    passwordInput.value = "";
+    passwordInput.setAttribute("autocomplete", "username");
   } else if (mode === "register") {
-    connectSubtitle.textContent = "Создайте новый аккаунт";
+    connectSubtitle.textContent = "Создайте свой ник";
     connectBtn.textContent = "Зарегистрироваться";
-    authSwitchText.textContent = "Уже есть аккаунт?";
+    authSwitchText.textContent = "Уже есть ник?";
     authSwitchLink.textContent = "Войти";
-    passwordInput.setAttribute("autocomplete", "new-password");
-    passwordFieldGroup.classList.remove("hidden");
-    recoveryFieldGroup.classList.add("hidden");
-    forgotPasswordLink.parentElement.classList.remove("hidden");
+    passwordInput.value = "";
+    passwordInput.setAttribute("autocomplete", "username");
   } else if (mode === "forgot") {
-    connectSubtitle.textContent = "Восстановление пароля по коду";
-    connectBtn.textContent = "Сбросить пароль";
-    authSwitchText.textContent = "Вспомнили пароль?";
+    connectSubtitle.textContent = "Восстановление по коду";
+    connectBtn.textContent = "Сбросить";
+    authSwitchText.textContent = "Вспомнили?";
     authSwitchLink.textContent = "Войти";
-    passwordFieldGroup.classList.add("hidden");
     recoveryFieldGroup.classList.remove("hidden");
-    forgotPasswordLink.parentElement.classList.add("hidden");
   } else if (mode === "twofa") {
-    connectSubtitle.textContent = "Введите код из приложения-аутентификатора";
+    connectSubtitle.textContent = "Введите код из приложения";
     connectBtn.textContent = "Подтвердить";
     authSwitchText.textContent = "";
     authSwitchLink.textContent = "Назад";
+    twofaFieldGroup.classList.remove("hidden");
     passwordFieldGroup.classList.add("hidden");
     recoveryFieldGroup.classList.add("hidden");
-    twofaFieldGroup.classList.remove("hidden");
-    forgotPasswordLink.parentElement.classList.add("hidden");
     usernameInput.disabled = true;
     twofaCodeInput.focus();
   }
@@ -1274,6 +1271,8 @@ forgotPasswordLink.addEventListener("click", (e) => {
   e.preventDefault();
   setAuthMode("forgot");
 });
+
+setAuthMode("login");
 
 async function submitAuth() {
   const username = usernameInput.value.trim();
@@ -1337,9 +1336,14 @@ async function submitAuth() {
     return;
   }
 
-  const password = passwordInput.value;
-  if (!username || !password) {
-    connectError.textContent = "Заполните имя пользователя и пароль";
+  if (!username) {
+    connectError.textContent = "Введите ник";
+    return;
+  }
+
+  const usernameRegex = /^[a-zA-Zа-яА-ЯёЁ0-9_-]{2,24}$/;
+  if (!usernameRegex.test(username)) {
+    connectError.textContent = "Ник: 2–24 символа, буквы/цифры/_/-";
     return;
   }
 
@@ -1347,39 +1351,20 @@ async function submitAuth() {
   connectBtn.disabled = true;
 
   try {
-    const endpoint = authMode === "login" ? "/api/login" : "/api/register";
-    const res = await fetch(endpoint, {
+    const res = await fetch("/api/join", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username }),
     });
     const data = await res.json();
 
     if (!res.ok) {
-      connectError.textContent = data.error || "Что-то пошло не так";
+      connectError.textContent = data.error || "Не удалось войти";
       connectBtn.disabled = false;
-      return;
-    }
-
-    if (data.need2FA) {
-      pendingTempToken = data.tempToken;
-      connectBtn.disabled = false;
-      setAuthMode("twofa");
       return;
     }
 
     localStorage.setItem("token", data.token);
-
-    if (authMode === "register" && data.recoveryCode) {
-      recoveryCodeDisplay.textContent = data.recoveryCode;
-      recoveryCodeModal.classList.remove("hidden");
-      recoveryCodeOkBtn.onclick = () => {
-        recoveryCodeModal.classList.add("hidden");
-        connectWithToken(data.token);
-      };
-      return;
-    }
-
     connectWithToken(data.token);
   } catch (err) {
     connectError.textContent = "Не удалось связаться с сервером";
