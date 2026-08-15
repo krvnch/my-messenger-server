@@ -1544,14 +1544,31 @@ function connectWithToken(token) {
   socket.on("users:update", renderOnlineList);
 }
 
+// Декодирует тело JWT в браузере (без проверки подписи — только для UI,
+// подпись всё равно проверяет сервер при подключении).
+// Обычный atob() ломает не-латинские символы (кириллицу, эмодзи и т.п.),
+// потому что декодирует base64 в "байтовую" строку, а не в текст UTF-8.
+// Поэтому проходим дополнительный шаг через escape/decodeURIComponent —
+// это стандартный приём для корректного UTF-8-декодирования в браузере.
+function decodeJwtPayload(token) {
+  const base64Url = token.split(".")[1];
+  const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = base64 + "===".slice((base64.length + 3) % 4);
+  const utf8Json = decodeURIComponent(
+    atob(padded)
+      .split("")
+      .map((c) => "%" + c.charCodeAt(0).toString(16).padStart(2, "0"))
+      .join("")
+  );
+  return JSON.parse(utf8Json);
+}
+
 // Если токен уже сохранён (перезагрузка страницы) — сразу подключаемся,
 // минуя форму логина. myName возьмём из первого события users:update.
 const savedToken = localStorage.getItem("token");
 if (savedToken) {
-  // Декодируем username из тела JWT (без проверки подписи — только для UI),
-  // подпись всё равно проверяет сервер при подключении.
   try {
-    const payload = JSON.parse(atob(savedToken.split(".")[1]));
+    const payload = decodeJwtPayload(savedToken);
     myName = payload.username || "";
   } catch (e) {
     // payload не читается — ничего страшного, имя подставится позже
