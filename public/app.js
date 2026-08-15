@@ -72,10 +72,16 @@ const sidebarToggle = document.getElementById("sidebar-toggle");
 const sidebarOverlay = document.getElementById("sidebar-overlay");
 
 const dmCallBtn = document.getElementById("dm-call-btn");
-const channelCallBtn = document.getElementById("channel-call-btn");
-const megaCallLabel = document.getElementById("mega-call-label");
-const megaCallSub = document.getElementById("mega-call-sub");
-const megaCallIcon = document.getElementById("mega-call-icon");
+const headerCallBtn = document.getElementById("header-call-btn");
+const headerCallIcon = document.getElementById("header-call-icon");
+const headerCallText = document.getElementById("header-call-text");
+const welcomePanel = document.getElementById("welcome-panel");
+const welcomeUsernameEl = document.getElementById("welcome-username");
+const welcomeCallBtn = document.getElementById("welcome-call-btn");
+const welcomeCallIcon = document.getElementById("welcome-call-icon");
+const welcomeCallLabel = document.getElementById("welcome-call-label");
+const welcomeCallSub = document.getElementById("welcome-call-sub");
+const welcomeChatBtn = document.getElementById("welcome-chat-btn");
 const callBar = document.getElementById("call-bar");
 const callBarTitle = document.getElementById("call-bar-title");
 const callBarParticipants = document.getElementById("call-bar-participants");
@@ -639,12 +645,74 @@ function updateHeaderAndInput() {
   updateChatHeaderStatus();
 }
 
+// ================= Приветственный экран =================
+// После входа пользователь сначала видит две крупные кнопки — "Войти в войс"
+// и "Открыть чат" — а не сразу общий чат. Это даёт выбор, не наваливая всё
+// сразу, и даёт войсу заметное, но не перекрывающее сообщения место.
+let uiMode = "welcome"; // "welcome" | "chat"
+
+function enterChatMode() {
+  if (uiMode === "chat") return;
+  uiMode = "chat";
+  welcomePanel.classList.add("hidden");
+  messagesEl.classList.remove("hidden");
+  messageForm.classList.remove("hidden");
+  headerCallBtn.classList.remove("hidden");
+}
+
+function showWelcome() {
+  uiMode = "welcome";
+  welcomeUsernameEl.textContent = myName;
+  welcomePanel.classList.remove("hidden");
+  messagesEl.classList.add("hidden");
+  messageForm.classList.add("hidden");
+  headerCallBtn.classList.add("hidden");
+  replyPreview.classList.add("hidden");
+  attachmentPreview.classList.add("hidden");
+  voiceRecordingBar.classList.add("hidden");
+  chatHeader.querySelector(".chat-header-title").textContent = "Флоу";
+}
+
+// Синхронизирует вид кнопки звонка сразу в двух местах: на приветственном
+// экране (крупная) и в шапке чата (компактная) — они всегда должны совпадать.
+function updateCallButtonsUI() {
+  const icon = inChannelCall ? "🔴" : "🎤";
+  const label = inChannelCall ? "Покинуть войс" : "Войти в войс";
+  welcomeCallBtn.classList.toggle("in-call", inChannelCall);
+  welcomeCallIcon.textContent = icon;
+  welcomeCallLabel.textContent = label;
+  headerCallBtn.classList.toggle("in-call", inChannelCall);
+  headerCallIcon.textContent = icon;
+  headerCallText.textContent = inChannelCall ? "В войсе" : "Войс";
+}
+
+function setWelcomeCallSub(text) {
+  if (text) {
+    welcomeCallSub.textContent = text;
+    welcomeCallSub.classList.remove("hidden");
+  } else {
+    welcomeCallSub.classList.add("hidden");
+  }
+}
+
+function toggleChannelCall() {
+  if (inChannelCall) leaveChannelCall();
+  else joinChannelCall();
+}
+welcomeCallBtn.addEventListener("click", toggleChannelCall);
+headerCallBtn.addEventListener("click", toggleChannelCall);
+welcomeChatBtn.addEventListener("click", () => {
+  enterChatMode();
+  switchToChannel();
+});
+
 function clearPendingReply() {
   pendingReply = null;
   replyPreview.classList.add("hidden");
 }
 
 function switchToChannel() {
+  enterChatMode();
   currentView = { type: "channel" };
   clearPendingReply();
   markChannelRead();
@@ -657,6 +725,7 @@ function switchToChannel() {
 }
 
 function switchToDm(username) {
+  enterChatMode();
   currentView = { type: "dm", withUser: username };
   clearPendingReply();
   markDmRead(username);
@@ -677,6 +746,7 @@ function switchToDm(username) {
 function switchToGroup(groupId) {
   const group = groupsList.find((g) => g.id === groupId);
   if (!group) return;
+  enterChatMode();
   currentView = { type: "group", groupId, name: group.name };
   clearPendingReply();
   markGroupRead(groupId);
@@ -1115,11 +1185,11 @@ function connectWithToken(token) {
     meNameEl.textContent = myName;
     connectScreen.classList.add("hidden");
     app.classList.remove("hidden");
-    messageInput.focus();
+    showWelcome();
 
     channelHistory.length = 0;
     channelHistory.push(...history);
-    if (currentView.type === "channel") renderCurrentView();
+    if (currentView.type === "channel" && uiMode === "chat") renderCurrentView();
   });
 
   socket.on("message:new", (msg) => {
@@ -1742,8 +1812,7 @@ function registerConnectionHooks() {
 
   socket.on("call:room:count", (count) => {
     if (!inChannelCall) {
-      megaCallSub.textContent = count > 0 ? `Сейчас в войсе: ${count}` : "";
-      megaCallSub.classList.toggle("hidden", count === 0);
+      setWelcomeCallSub(count > 0 ? `Сейчас в войсе: ${count}` : "");
     }
   });
 
@@ -1792,8 +1861,21 @@ async function handleSignal(pc, data, sendAnswer) {
 
 async function getMic() {
   if (localStream) return localStream;
+  if (!isSecureContextForMedia()) {
+    throw new Error("insecure-context");
+  }
   localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   return localStream;
+}
+
+// Браузеры (особенно мобильные) блокируют доступ к микрофону/камере вне
+// "безопасного контекста" — то есть везде, кроме HTTPS и localhost. Если вы
+// тестируете через локальный IP по обычному http://, звонки не будут
+// работать на телефоне даже с разрешённым доступом — деплойте на Render
+// (там HTTPS из коробки) или используйте туннель вроде ngrok/Cloudflare Tunnel.
+function isSecureContextForMedia() {
+  if (window.isSecureContext) return true;
+  return ["localhost", "127.0.0.1"].includes(location.hostname);
 }
 
 function stopMic() {
@@ -1816,6 +1898,21 @@ function createPeerConnection(onIceCandidate, onTrack) {
 
 // ----- DM звонки -----
 
+// Единое, понятное сообщение об ошибке доступа к микрофону — отдельно
+// объясняем самую частую причину (небезопасный контекст: http на телефоне).
+function micErrorMessage(e) {
+  if (e && e.message === "insecure-context") {
+    return "Микрофон недоступен: сайт открыт не по HTTPS. На телефоне это заблокировано браузером — откройте адрес через https:// (например, задеплойте на Render) или зайдите через localhost.";
+  }
+  if (e && e.name === "NotAllowedError") {
+    return "Доступ к микрофону запрещён. Разрешите его в настройках браузера/сайта и попробуйте снова.";
+  }
+  if (e && e.name === "NotFoundError") {
+    return "Микрофон не найден на этом устройстве.";
+  }
+  return "Нет доступа к микрофону.";
+}
+
 dmCallBtn.addEventListener("click", () => {
   if (currentView.type !== "dm") return;
   startDmCall(currentView.withUser);
@@ -1829,7 +1926,7 @@ async function startDmCall(toUsername) {
   try {
     await getMic();
   } catch (e) {
-    addSystemMessage("Нет доступа к микрофону");
+    addSystemMessage(micErrorMessage(e));
     return;
   }
   dmCallState = { peer: toUsername, pc: null, status: "ringing-out" };
@@ -1846,7 +1943,7 @@ acceptCallBtn.addEventListener("click", async () => {
     await getMic();
   } catch (e) {
     socket.emit("call:dm:decline", { to: from });
-    addSystemMessage("Нет доступа к микрофону");
+    addSystemMessage(micErrorMessage(e));
     return;
   }
   dmCallState = { peer: from, pc: null, status: "active" };
@@ -1891,14 +1988,6 @@ function endDmCall(notifyPeer) {
 
 // ----- Групповой звонок в #general -----
 
-channelCallBtn.addEventListener("click", () => {
-  if (inChannelCall) {
-    leaveChannelCall();
-  } else {
-    joinChannelCall();
-  }
-});
-
 async function joinChannelCall() {
   if (dmCallState) {
     addSystemMessage("Сначала завершите текущий звонок");
@@ -1907,17 +1996,20 @@ async function joinChannelCall() {
   try {
     await getMic();
   } catch (e) {
-    addSystemMessage("Нет доступа к микрофону");
+    addSystemMessage(micErrorMessage(e));
     return;
   }
   inChannelCall = true;
-  megaCallIcon.textContent = "🔴";
-  megaCallLabel.textContent = "Покинуть войс";
-  megaCallSub.textContent = "Вы в звонке";
-  megaCallSub.classList.remove("hidden");
-  channelCallBtn.classList.add("in-call");
+  updateCallButtonsUI();
+  setWelcomeCallSub("Вы в звонке");
   socket.emit("call:room:join");
   showCallBar("Звонок в #general");
+  // Показываем чат под звонком, как и просили — войс сам по себе не должен
+  // занимать весь экран. Если человек нажал "Войти в войс" ещё на
+  // приветственном экране, открываем для него #general.
+  const wasWelcome = uiMode === "welcome";
+  enterChatMode();
+  if (wasWelcome) switchToChannel();
 }
 
 async function addChannelPeer(socketId, username, isCaller) {
@@ -1957,11 +2049,8 @@ function leaveChannelCall() {
   });
   channelCallPeers.clear();
   inChannelCall = false;
-  megaCallIcon.textContent = "🎤";
-  megaCallLabel.textContent = "Войти в войс";
-  megaCallSub.textContent = "";
-  megaCallSub.classList.add("hidden");
-  channelCallBtn.classList.remove("in-call");
+  updateCallButtonsUI();
+  setWelcomeCallSub("");
   stopScreenShare();
   stopMic();
   hideCallBar();
@@ -2097,19 +2186,20 @@ async function startScreenShare() {
   isScreenSharing = true;
   toggleScreenBtn.classList.add("active");
 
-  // Добавление новой дорожки к уже установленному соединению требует повторного
-  // согласования (renegotiation) — создаём и отправляем новый offer вручную.
+  const audioTrack = stream.getAudioTracks()[0];
+
+  // Добавление новых дорожек к уже установленному соединению требует
+  // повторного согласования (renegotiation). Добавляем видео- и (если есть)
+  // аудио-дорожку СНАЧАЛА, и только потом делаем один offer — иначе вторая
+  // дорожка "молча" остаётся не согласованной и звук/видео демонстрации не
+  // доходит до собеседника.
   for (const pc of activePeerConnections()) {
     const sender = pc.addTrack(track, screenStream);
     await applyScreenShareEncoding(sender);
+    if (audioTrack) pc.addTrack(audioTrack, screenStream);
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     sendRenegotiationOffer(pc, offer);
-  }
-
-  const audioTrack = stream.getAudioTracks()[0];
-  if (audioTrack) {
-    for (const pc of activePeerConnections()) pc.addTrack(audioTrack, screenStream);
   }
 
   track.onended = () => stopScreenShare();
