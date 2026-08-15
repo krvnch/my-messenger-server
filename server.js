@@ -16,6 +16,15 @@ const QRCode = require("qrcode");
 const { Server } = require("socket.io");
 const { MongoClient } = require("mongodb");
 
+// Разрешённые аватарки-эмодзи (должно совпадать со списком AVATAR_EMOJIS в app.js).
+// Сервер — источник истины: даже если кто-то отправит событие в сокет напрямую,
+// минуя интерфейс, всё, что не входит в этот список, будет отброшено.
+// Это защищает от XSS через поле аватарки (см. normalizeAvatar ниже).
+const ALLOWED_AVATARS = new Set(["😀", "😎", "🤖", "🐱", "🐶", "🦊", "🐼", "🐸", "🦄", "🌟", "🔥", "⚡", "🌈", "🍀", "🎧", "🎮", "📚", "☕"]);
+function normalizeAvatar(avatar) {
+  return typeof avatar === "string" && ALLOWED_AVATARS.has(avatar) ? avatar : null;
+}
+
 const PORT = process.env.PORT || 3001;
 // В проде обязательно задай свой JWT_SECRET через переменную окружения!
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString("hex");
@@ -46,9 +55,48 @@ app.use(express.static(path.join(__dirname, "public")));
 //                           (например, R2 public bucket URL или свой CDN)
 const UPLOADS_DIR = path.join(__dirname, "uploads");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-app.use("/uploads", express.static(UPLOADS_DIR));
+
+// Отдаём загруженные файлы двумя доп. заголовками для защиты от XSS:
+// - X-Content-Type-Options: браузер не будет "угадывать" тип файла и
+//   выполнять его как HTML/JS, даже если расширение подделано.
+// - Content-Disposition: attachment для всего, кроме картинок — файл
+//   будет скачиваться, а не открываться и выполняться прямо в браузере.
+const INLINE_SAFE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+app.use(
+  "/uploads",
+  express.static(UPLOADS_DIR, {
+    setHeaders: (res, filePath) => {
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      if (!INLINE_SAFE_EXT.has(path.extname(filePath).toLowerCase())) {
+        res.setHeader("Content-Disposition", "attachment");
+      }
+    },
+  })
+);
 
 const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15 МБ
+
+// Белый список разрешённых типов вложений. Всё, что может содержать
+// исполняемый код и открыться прямо в браузере (html, svg, js и т.п.),
+// сюда не входит — это и есть защита от загрузки файла-ловушки с XSS.
+const ALLOWED_MIME_TYPES = new Set([
+  "image/png", "image/jpeg", "image/gif", "image/webp",
+  "application/pdf",
+  "text/plain",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/zip",
+]);
+function fileFilter(req, file, cb) {
+  if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
+    return cb(new Error("Недопустимый тип файла"));
+  }
+  cb(null, true);
+}
 
 const S3_ENABLED = !!(process.env.S3_BUCKET && process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY);
 let s3Client = null;
@@ -69,7 +117,7 @@ if (S3_ENABLED) {
 }
 
 const upload = S3_ENABLED
-  ? multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_SIZE } })
+  ? multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_SIZE }, fileFilter })
   : multer({
       storage: multer.diskStorage({
         destination: (req, file, cb) => cb(null, UPLOADS_DIR),
@@ -79,6 +127,7 @@ const upload = S3_ENABLED
         },
       }),
       limits: { fileSize: MAX_FILE_SIZE },
+      fileFilter,
     });
 
 async function uploadToS3(file) {
@@ -113,7 +162,12 @@ function requireAuth(req, res, next) {
 app.post("/api/upload", requireAuth, (req, res) => {
   upload.single("file")(req, res, async (err) => {
     if (err) {
-      const msg = err.code === "LIMIT_FILE_SIZE" ? "Файл больше 15 МБ" : "Не удалось загрузить файл";
+      const msg =
+        err.code === "LIMIT_FILE_SIZE"
+          ? "Файл больше 15 МБ"
+          : err.message === "Недопустимый тип файла"
+          ? "Этот тип файла не поддерживается"
+          : "Не удалось загрузить файл";
       return res.status(400).json({ error: msg });
     }
     if (!req.file) return res.status(400).json({ error: "Файл не получен" });
@@ -604,7 +658,7 @@ io.on("connection", (socket) => {
 
   socket.on("user:join", ({ avatar, status } = {}) => {
     const username = socket.username; // берём из проверенного токена, не от клиента
-    onlineUsers.set(socket.id, { username, avatar: avatar || null, status: normalizeStatus(status) });
+    onlineUsers.set(socket.id, { username, avatar: normalizeAvatar(avatar), status: normalizeStatus(status) });
     socket.join(CHANNEL);
 
     // Присоединяем к комнатам всех групп, в которых пользователь состоит
@@ -623,7 +677,7 @@ io.on("connection", (socket) => {
     if (!current) return;
     onlineUsers.set(socket.id, {
       username: socket.username,
-      avatar: avatar !== undefined ? avatar || null : current.avatar,
+      avatar: avatar !== undefined ? normalizeAvatar(avatar) : current.avatar,
       status: status !== undefined ? normalizeStatus(status) : current.status,
     });
     broadcastUserList();
@@ -838,7 +892,7 @@ io.on("connection", (socket) => {
       id: crypto.randomBytes(8).toString("hex"),
       name: name.trim().slice(0, 40),
       description: (description || "").trim().slice(0, 200),
-      avatar: avatar || null,
+      avatar: normalizeAvatar(avatar),
       owner,
       admins: [],
       members: cleanMembers,
@@ -871,7 +925,7 @@ io.on("connection", (socket) => {
     if (!group || !isGroupAdmin(group, socket.username)) return;
     if (typeof name === "string" && name.trim()) group.name = name.trim().slice(0, 40);
     if (typeof description === "string") group.description = description.trim().slice(0, 200);
-    if (avatar !== undefined) group.avatar = avatar || null;
+    if (avatar !== undefined) group.avatar = normalizeAvatar(avatar);
     persistGroup(group);
     io.to(groupRoom(groupId)).emit("group:updated", sanitizeGroup(group));
   });
