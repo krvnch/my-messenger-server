@@ -34,6 +34,11 @@
         <input id="new-password-input" class="text-input" type="password" placeholder="Не менее 6 символов" maxlength="72" autocomplete="new-password" />
       </div>
 
+      <div id="twofa-field-group" class="hidden">
+        <label class="field-label">Код из приложения-аутентификатора</label>
+        <input id="twofa-code-input" class="text-input" type="text" inputmode="numeric" placeholder="123456" maxlength="6" autocomplete="one-time-code" />
+      </div>
+
       <button id="connect-btn" class="primary-btn">Войти</button>
       <p id="connect-error" class="connect-error"></p>
 
@@ -67,11 +72,13 @@
         <span class="logo-text small">Флоу</span>
         <button id="theme-toggle-btn" class="icon-btn" title="Сменить тему">🌙</button>
         <button id="sound-toggle-btn" class="icon-btn" title="Звук уведомлений">🔔</button>
+        <button id="notif-toggle-btn" class="icon-btn" title="Push-уведомления браузера">🔕</button>
       </div>
 
       <div class="channel-list">
         <div id="channel-general" class="channel active">
           <span class="channel-hash">#</span> general
+          <span id="channel-unread-badge" class="unread-badge hidden"></span>
         </div>
         <button id="channel-call-btn" class="join-call-btn">🎤 Присоединиться к звонку</button>
       </div>
@@ -90,6 +97,7 @@
       <div class="sidebar-footer">
         <div id="profile-trigger" class="profile-trigger">
           <span id="me-avatar" class="avatar"></span>
+          <span id="me-status-dot" class="me-status-dot online"></span>
           <span id="me-name" class="me-name"></span>
           <span class="edit-icon">✎</span>
         </div>
@@ -98,7 +106,15 @@
           <label class="field-label">Аватар</label>
           <div id="avatar-grid" class="avatar-grid"></div>
 
+          <label class="field-label">Статус</label>
+          <div id="status-picker" class="status-picker">
+            <button type="button" class="status-opt" data-status="online"><span class="status-dot online"></span> В сети</button>
+            <button type="button" class="status-opt" data-status="away"><span class="status-dot away"></span> Отошёл</button>
+            <button type="button" class="status-opt" data-status="dnd"><span class="status-dot dnd"></span> Не беспокоить</button>
+          </div>
+
           <button id="save-profile-btn" class="primary-btn small">Сохранить</button>
+          <button id="open-security-btn" class="primary-btn small secondary">Пароль и безопасность</button>
           <button id="logout-btn" class="primary-btn small secondary">Выйти из аккаунта</button>
         </div>
       </div>
@@ -113,6 +129,7 @@
           </div>
         </div>
         <div class="chat-header-right">
+          <button id="group-settings-btn" class="call-trigger-btn hidden" title="Настройки группы">⚙️</button>
           <button id="group-delete-btn" class="call-trigger-btn hidden" title="Удалить группу">🗑️</button>
           <button id="dm-call-btn" class="call-trigger-btn hidden" title="Позвонить">📞</button>
           <div id="chat-header-status" class="chat-header-status"></div>
@@ -148,12 +165,79 @@
       <div class="recovery-title">Новая группа</div>
       <label class="field-label">Название</label>
       <input id="group-name-input" class="text-input" type="text" placeholder="Например, Проект X" maxlength="40" />
+      <label class="field-label">Описание (необязательно)</label>
+      <input id="group-description-input" class="text-input" type="text" placeholder="О чём эта группа" maxlength="200" />
+      <label class="field-label">Аватар группы</label>
+      <div id="group-avatar-grid" class="avatar-grid"></div>
       <label class="field-label">Участники</label>
       <div id="group-members-list" class="avatar-grid group-members-list"></div>
       <div class="incoming-call-actions-row">
         <button id="group-create-cancel-btn" class="primary-btn small secondary">Отмена</button>
         <button id="group-create-confirm-btn" class="primary-btn small">Создать</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Настройки группы -->
+  <div id="group-settings-modal" class="incoming-call-modal hidden">
+    <div class="incoming-call-card recovery-card">
+      <div class="recovery-title">Настройки группы</div>
+      <label class="field-label">Название</label>
+      <input id="group-edit-name-input" class="text-input" type="text" maxlength="40" />
+      <label class="field-label">Описание</label>
+      <input id="group-edit-description-input" class="text-input" type="text" maxlength="200" />
+      <label class="field-label">Аватар группы</label>
+      <div id="group-edit-avatar-grid" class="avatar-grid"></div>
+
+      <label class="field-label">Участники</label>
+      <ul id="group-edit-members-list" class="online-list group-edit-members-list"></ul>
+
+      <div id="group-edit-add-section">
+        <label class="field-label">Добавить участника</label>
+        <div id="group-edit-add-list" class="avatar-grid group-members-list"></div>
+      </div>
+
+      <div class="incoming-call-actions-row">
+        <button id="group-settings-close-btn" class="primary-btn small secondary">Закрыть</button>
+        <button id="group-settings-save-btn" class="primary-btn small">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Пароль и безопасность -->
+  <div id="security-modal" class="incoming-call-modal hidden">
+    <div class="incoming-call-card recovery-card">
+      <div class="recovery-title">Пароль и безопасность</div>
+
+      <label class="field-label">Текущий пароль</label>
+      <input id="current-password-input" class="text-input" type="password" autocomplete="current-password" />
+      <label class="field-label">Новый пароль</label>
+      <input id="change-password-input" class="text-input" type="password" placeholder="Не менее 6 символов" autocomplete="new-password" />
+      <button id="change-password-btn" class="primary-btn small">Сменить пароль</button>
+      <p id="security-error" class="connect-error"></p>
+
+      <div class="security-divider"></div>
+
+      <div id="twofa-disabled-block">
+        <p class="recovery-sub">Двухфакторная авторизация (2FA) не включена.</p>
+        <button id="twofa-setup-btn" class="primary-btn small secondary">Включить 2FA</button>
+      </div>
+
+      <div id="twofa-setup-block" class="hidden">
+        <p class="recovery-sub">Отсканируйте QR-код в приложении-аутентификаторе (Google Authenticator, Authy и т.п.), затем введите код для подтверждения.</p>
+        <img id="twofa-qr-img" class="twofa-qr" alt="QR-код 2FA" />
+        <p id="twofa-secret-text" class="twofa-secret"></p>
+        <input id="twofa-confirm-input" class="text-input" type="text" inputmode="numeric" placeholder="123456" maxlength="6" />
+        <button id="twofa-confirm-btn" class="primary-btn small">Подтвердить и включить</button>
+      </div>
+
+      <div id="twofa-enabled-block" class="hidden">
+        <p class="recovery-sub">Двухфакторная авторизация включена ✅</p>
+        <input id="twofa-disable-password-input" class="text-input" type="password" placeholder="Пароль для отключения" />
+        <button id="twofa-disable-btn" class="primary-btn small secondary">Отключить 2FA</button>
+      </div>
+
+      <button id="security-close-btn" class="primary-btn small secondary">Закрыть</button>
     </div>
   </div>
 
