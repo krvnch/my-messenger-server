@@ -1,8 +1,23 @@
 let socket = null;
 let myName = "";
 let myAvatar = null;
-let onlineUsersList = []; // [{ username, avatar }]
+let myStatus = "online"; // "online" | "away" | "dnd"
+let onlineUsersList = []; // [{ username, avatar, status }]
 let authMode = "login"; // "login" | "register" | "forgot"
+let pendingTempToken = null; // хранит tempToken между шагом пароля и шагом 2FA при входе
+
+// Непрочитанные сообщения: channel — число, dm/group — Map(key -> {count, mention})
+let unreadChannel = 0;
+const unreadDm = new Map(); // username -> { count, mention }
+const unreadGroup = new Map(); // groupId -> { count, mention }
+
+// Push-уведомления браузера (Notification API)
+let notificationsEnabled = localStorage.getItem("notificationsEnabled") === "on";
+
+// Автоматический статус "Отошёл" при бездействии
+const IDLE_AWAY_MS = 5 * 60 * 1000; // 5 минут без активности
+let idleTimer = null;
+let autoAway = false;
 
 // Текущий вид: { type: "channel" } | { type: "dm", withUser } | { type: "group", groupId, name }
 let currentView = { type: "channel" };
@@ -90,6 +105,8 @@ const forgotPasswordLink = document.getElementById("forgot-password-link");
 const recoveryCodeModal = document.getElementById("recovery-code-modal");
 const recoveryCodeDisplay = document.getElementById("recovery-code-display");
 const recoveryCodeOkBtn = document.getElementById("recovery-code-ok-btn");
+const twofaFieldGroup = document.getElementById("twofa-field-group");
+const twofaCodeInput = document.getElementById("twofa-code-input");
 
 const replyPreview = document.getElementById("reply-preview");
 const replyPreviewText = document.getElementById("reply-preview-text");
@@ -99,12 +116,49 @@ const groupListEl = document.getElementById("group-list");
 const createGroupBtn = document.getElementById("create-group-btn");
 const createGroupModal = document.getElementById("create-group-modal");
 const groupNameInput = document.getElementById("group-name-input");
+const groupDescriptionInput = document.getElementById("group-description-input");
+const groupAvatarGrid = document.getElementById("group-avatar-grid");
 const groupMembersList = document.getElementById("group-members-list");
 const groupCreateCancelBtn = document.getElementById("group-create-cancel-btn");
 const groupCreateConfirmBtn = document.getElementById("group-create-confirm-btn");
 const groupDeleteBtn = document.getElementById("group-delete-btn");
+const groupSettingsBtn = document.getElementById("group-settings-btn");
+
+const groupSettingsModal = document.getElementById("group-settings-modal");
+const groupEditNameInput = document.getElementById("group-edit-name-input");
+const groupEditDescriptionInput = document.getElementById("group-edit-description-input");
+const groupEditAvatarGrid = document.getElementById("group-edit-avatar-grid");
+const groupEditMembersList = document.getElementById("group-edit-members-list");
+const groupEditAddSection = document.getElementById("group-edit-add-section");
+const groupEditAddList = document.getElementById("group-edit-add-list");
+const groupSettingsCloseBtn = document.getElementById("group-settings-close-btn");
+const groupSettingsSaveBtn = document.getElementById("group-settings-save-btn");
+
+const channelUnreadBadge = document.getElementById("channel-unread-badge");
+const notifToggleBtn = document.getElementById("notif-toggle-btn");
+const meStatusDot = document.getElementById("me-status-dot");
+const statusPicker = document.getElementById("status-picker");
+
+const openSecurityBtn = document.getElementById("open-security-btn");
+const securityModal = document.getElementById("security-modal");
+const securityCloseBtn = document.getElementById("security-close-btn");
+const currentPasswordInput = document.getElementById("current-password-input");
+const changePasswordInput = document.getElementById("change-password-input");
+const changePasswordBtn = document.getElementById("change-password-btn");
+const securityError = document.getElementById("security-error");
+const twofaDisabledBlock = document.getElementById("twofa-disabled-block");
+const twofaSetupBlock = document.getElementById("twofa-setup-block");
+const twofaEnabledBlock = document.getElementById("twofa-enabled-block");
+const twofaSetupBtn = document.getElementById("twofa-setup-btn");
+const twofaQrImg = document.getElementById("twofa-qr-img");
+const twofaSecretText = document.getElementById("twofa-secret-text");
+const twofaConfirmInput = document.getElementById("twofa-confirm-input");
+const twofaConfirmBtn = document.getElementById("twofa-confirm-btn");
+const twofaDisablePasswordInput = document.getElementById("twofa-disable-password-input");
+const twofaDisableBtn = document.getElementById("twofa-disable-btn");
 
 let popoverSelectedAvatar = null;
+let popoverSelectedStatus = "online";
 
 // ================= Тема (светлая/тёмная) =================
 function applyTheme(theme) {
@@ -158,6 +212,48 @@ function playNotificationSound() {
   }
 }
 
+// ================= Push-уведомления браузера =================
+function updateNotifBtn() {
+  const supported = "Notification" in window;
+  notifToggleBtn.textContent = notificationsEnabled && supported ? "🔔" : "🔕";
+  notifToggleBtn.title = supported
+    ? (notificationsEnabled ? "Push-уведомления включены" : "Включить push-уведомления браузера")
+    : "Браузер не поддерживает уведомления";
+}
+updateNotifBtn();
+
+notifToggleBtn.addEventListener("click", async () => {
+  if (!("Notification" in window)) {
+    addSystemMessage("Этот браузер не поддерживает уведомления");
+    return;
+  }
+  if (!notificationsEnabled) {
+    const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+    if (permission !== "granted") {
+      addSystemMessage("Доступ к уведомлениям не предоставлен");
+      return;
+    }
+    notificationsEnabled = true;
+  } else {
+    notificationsEnabled = false;
+  }
+  localStorage.setItem("notificationsEnabled", notificationsEnabled ? "on" : "off");
+  updateNotifBtn();
+});
+
+// Показывает системное уведомление, только когда вкладка неактивна (или важно — mention/ЛС)
+function maybeNotify(title, body, important) {
+  if (!notificationsEnabled) return;
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  if (!document.hidden) return; // уведомляем только когда вкладка неактивна
+  try {
+    const n = new Notification(title, { body: (body || "").slice(0, 150), icon: undefined });
+    n.onclick = () => window.focus();
+  } catch (e) {
+    // уведомления недоступны — просто пропускаем
+  }
+}
+
 function openSidebar() {
   sidebarEl.classList.add("open");
   sidebarOverlay.classList.remove("hidden");
@@ -196,6 +292,14 @@ function avatarOf(username) {
 function isUserOnline(username) {
   return onlineUsersList.some((u) => u.username === username);
 }
+
+function statusOf(username) {
+  if (username === myName) return myStatus;
+  const u = onlineUsersList.find((u) => u.username === username);
+  return u && u.status ? u.status : "online";
+}
+
+const STATUS_LABELS = { online: "В сети", away: "Отошёл", dnd: "Не беспокоить" };
 
 function renderMeAvatar() {
   meAvatarEl.textContent = myAvatar || initials(myName);
@@ -402,8 +506,8 @@ function addMessage(msg, authorField) {
 
   if (msg.text) {
     const bubble = document.createElement("div");
-    bubble.className = "bubble";
-    bubble.textContent = msg.text;
+    bubble.className = "bubble" + (!isOwn && isMentioned(msg.text) ? " mention-highlight" : "");
+    bubble.innerHTML = renderTextWithMentions(msg.text);
     row.appendChild(bubble);
   }
 
@@ -508,8 +612,13 @@ function updateChatHeaderStatus() {
   }
 }
 
+function isGroupAdminOf(group) {
+  return !!group && (group.owner === myName || (group.admins || []).includes(myName));
+}
+
 function updateHeaderAndInput() {
   groupDeleteBtn.classList.add("hidden");
+  groupSettingsBtn.classList.add("hidden");
   if (currentView.type === "channel") {
     chatHeader.querySelector(".chat-header-title").innerHTML = `<span class="channel-hash">#</span> general`;
     messageInput.placeholder = "Написать в #general";
@@ -527,6 +636,7 @@ function updateHeaderAndInput() {
     dmCallBtn.classList.add("hidden");
     const group = groupsList.find((g) => g.id === currentView.groupId);
     if (group && group.owner === myName) groupDeleteBtn.classList.remove("hidden");
+    if (isGroupAdminOf(group)) groupSettingsBtn.classList.remove("hidden");
   }
   updateChatHeaderStatus();
 }
@@ -539,6 +649,7 @@ function clearPendingReply() {
 function switchToChannel() {
   currentView = { type: "channel" };
   clearPendingReply();
+  markChannelRead();
   updateHeaderAndInput();
   renderCurrentView();
   renderOnlineList(onlineUsersList);
@@ -550,6 +661,7 @@ function switchToChannel() {
 function switchToDm(username) {
   currentView = { type: "dm", withUser: username };
   clearPendingReply();
+  markDmRead(username);
   updateHeaderAndInput();
 
   if (dmCache.has(username)) {
@@ -569,6 +681,7 @@ function switchToGroup(groupId) {
   if (!group) return;
   currentView = { type: "group", groupId, name: group.name };
   clearPendingReply();
+  markGroupRead(groupId);
   updateHeaderAndInput();
 
   if (groupCache.has(groupId)) {
@@ -589,7 +702,14 @@ function renderGroupList() {
     const li = document.createElement("li");
     const isActive = currentView.type === "group" && currentView.groupId === g.id;
     li.className = isActive ? "active-dm" : "";
-    li.innerHTML = `<span>👥</span> ${escapeHtml(g.name)}`;
+    li.innerHTML = `<span>${g.avatar ? escapeHtml(g.avatar) : "👥"}</span> ${escapeHtml(g.name)}`;
+    const unread = unreadGroup.get(g.id);
+    if (unread && unread.count > 0) {
+      const badge = document.createElement("span");
+      badge.className = "unread-badge" + (unread.mention ? " mention" : "");
+      badge.textContent = unread.count > 9 ? "9+" : String(unread.count);
+      li.appendChild(badge);
+    }
     li.addEventListener("click", () => switchToGroup(g.id));
     groupListEl.appendChild(li);
   });
@@ -602,9 +722,32 @@ groupDeleteBtn.addEventListener("click", () => {
   }
 });
 
+let groupCreateSelectedAvatar = null;
+
+function renderGroupAvatarGrid(gridEl, selected, onSelect) {
+  gridEl.innerHTML = "";
+  AVATAR_EMOJIS.forEach((emoji) => {
+    const opt = document.createElement("div");
+    opt.className = "avatar-option" + (selected === emoji ? " selected" : "");
+    opt.textContent = emoji;
+    opt.addEventListener("click", () => onSelect(emoji));
+    gridEl.appendChild(opt);
+  });
+}
+
 // ----- Создание группы -----
+function redrawGroupCreateAvatarGrid() {
+  renderGroupAvatarGrid(groupAvatarGrid, groupCreateSelectedAvatar, (emoji) => {
+    groupCreateSelectedAvatar = groupCreateSelectedAvatar === emoji ? null : emoji;
+    redrawGroupCreateAvatarGrid();
+  });
+}
+
 createGroupBtn.addEventListener("click", () => {
   groupNameInput.value = "";
+  groupDescriptionInput.value = "";
+  groupCreateSelectedAvatar = null;
+  redrawGroupCreateAvatarGrid();
   groupMembersList.innerHTML = "";
   onlineUsersList
     .filter((u) => u.username !== myName)
@@ -615,7 +758,7 @@ createGroupBtn.addEventListener("click", () => {
       groupMembersList.appendChild(opt);
     });
   if (!onlineUsersList.some((u) => u.username !== myName)) {
-    groupMembersList.innerHTML = `<div class="online-hint">Сейчас никого нет в сети — можно создать группу и добавить участников позже (через сообщение им попросите зайти).</div>`;
+    groupMembersList.innerHTML = `<div class="online-hint">Сейчас никого нет в сети — можно создать группу и добавить участников позже (через настройки группы).</div>`;
   }
   createGroupModal.classList.remove("hidden");
   groupNameInput.focus();
@@ -629,9 +772,114 @@ groupCreateConfirmBtn.addEventListener("click", () => {
     groupNameInput.focus();
     return;
   }
+  const description = groupDescriptionInput.value.trim();
   const members = Array.from(groupMembersList.querySelectorAll("input[type=checkbox]:checked")).map((el) => el.value);
-  socket.emit("group:create", { name, members });
+  socket.emit("group:create", { name, description, avatar: groupCreateSelectedAvatar, members });
   createGroupModal.classList.add("hidden");
+});
+
+// ----- Настройки группы (роли, участники, аватар, описание) -----
+let groupSettingsSelectedAvatar = null;
+let groupSettingsGroupId = null;
+
+function openGroupSettings(groupId) {
+  const group = groupsList.find((g) => g.id === groupId);
+  if (!group) return;
+  groupSettingsGroupId = groupId;
+  groupEditNameInput.value = group.name;
+  groupEditDescriptionInput.value = group.description || "";
+  groupSettingsSelectedAvatar = group.avatar || null;
+  redrawGroupEditAvatarGrid();
+  renderGroupSettingsMembers(group);
+  groupSettingsModal.classList.remove("hidden");
+}
+
+function redrawGroupEditAvatarGrid() {
+  renderGroupAvatarGrid(groupEditAvatarGrid, groupSettingsSelectedAvatar, (emoji) => {
+    groupSettingsSelectedAvatar = groupSettingsSelectedAvatar === emoji ? null : emoji;
+    redrawGroupEditAvatarGrid();
+  });
+}
+
+function renderGroupSettingsMembers(group) {
+  const amOwner = group.owner === myName;
+  const amAdmin = isGroupAdminOf(group);
+
+  groupEditMembersList.innerHTML = "";
+  group.members.forEach((username) => {
+    const li = document.createElement("li");
+    const isOwnerRow = username === group.owner;
+    const isAdminRow = (group.admins || []).includes(username);
+    const roleLabel = isOwnerRow ? " · владелец" : isAdminRow ? " · админ" : "";
+    li.innerHTML = `<span>${avatarOf(username) || "👤"}</span> ${escapeHtml(username)}<span class="member-role">${roleLabel}</span>`;
+
+    if (amOwner && !isOwnerRow) {
+      const roleBtn = document.createElement("button");
+      roleBtn.type = "button";
+      roleBtn.className = "member-action-btn";
+      roleBtn.textContent = isAdminRow ? "Снять админа" : "Сделать админом";
+      roleBtn.addEventListener("click", () => {
+        socket.emit("group:admins:set", { groupId: group.id, username, isAdmin: !isAdminRow });
+      });
+      li.appendChild(roleBtn);
+    }
+
+    if (amAdmin && !isOwnerRow && (amOwner || !isAdminRow)) {
+      const kickBtn = document.createElement("button");
+      kickBtn.type = "button";
+      kickBtn.className = "member-action-btn danger";
+      kickBtn.textContent = "Убрать";
+      kickBtn.addEventListener("click", () => {
+        if (confirm(`Убрать ${username} из группы?`)) {
+          socket.emit("group:members:remove", { groupId: group.id, username });
+        }
+      });
+      li.appendChild(kickBtn);
+    }
+
+    groupEditMembersList.appendChild(li);
+  });
+
+  groupEditAddSection.classList.toggle("hidden", !amAdmin);
+  groupEditAddList.innerHTML = "";
+  const addable = onlineUsersList.filter((u) => u.username !== myName && !group.members.includes(u.username));
+  if (!addable.length) {
+    groupEditAddList.innerHTML = `<div class="online-hint">Сейчас никого нового нет в сети, чтобы добавить</div>`;
+  } else {
+    addable.forEach((u) => {
+      const opt = document.createElement("label");
+      opt.className = "group-member-opt";
+      opt.innerHTML = `<input type="checkbox" value="${escapeHtml(u.username)}" /> ${u.avatar ? u.avatar + " " : ""}${escapeHtml(u.username)}`;
+      groupEditAddList.appendChild(opt);
+    });
+  }
+}
+
+groupSettingsBtn.addEventListener("click", () => {
+  if (currentView.type !== "group") return;
+  openGroupSettings(currentView.groupId);
+});
+
+groupSettingsCloseBtn.addEventListener("click", () => {
+  groupSettingsModal.classList.add("hidden");
+  groupSettingsGroupId = null;
+});
+
+groupSettingsSaveBtn.addEventListener("click", () => {
+  if (!groupSettingsGroupId) return;
+  const name = groupEditNameInput.value.trim();
+  const description = groupEditDescriptionInput.value.trim();
+  if (!name) {
+    groupEditNameInput.focus();
+    return;
+  }
+  socket.emit("group:update", { groupId: groupSettingsGroupId, name, description, avatar: groupSettingsSelectedAvatar });
+  const toAdd = Array.from(groupEditAddList.querySelectorAll("input[type=checkbox]:checked")).map((el) => el.value);
+  if (toAdd.length) {
+    socket.emit("group:members:add", { groupId: groupSettingsGroupId, members: toAdd });
+  }
+  groupSettingsModal.classList.add("hidden");
+  groupSettingsGroupId = null;
 });
 
 function renderOnlineList(users) {
@@ -643,8 +891,16 @@ function renderOnlineList(users) {
     const isSelf = u.username === myName;
     const isActive = currentView.type === "dm" && currentView.withUser === u.username;
     li.className = (isSelf ? "self" : "") + (isActive ? " active-dm" : "");
-    const avatarHtml = u.avatar ? `<span>${u.avatar}</span>` : `<span class="status-dot"></span>`;
-    li.innerHTML = `${avatarHtml} ${escapeHtml(u.username)}${isSelf ? " (вы)" : ""}`;
+    const status = u.status || "online";
+    const avatarHtml = u.avatar ? `<span>${u.avatar}</span>` : `<span class="status-dot ${status}"></span>`;
+    li.innerHTML = `${avatarHtml} ${escapeHtml(u.username)}${isSelf ? " (вы)" : ""}${u.avatar ? `<span class="status-dot inline ${status}" title="${STATUS_LABELS[status]}"></span>` : ""}`;
+    const unread = unreadDm.get(u.username);
+    if (!isSelf && unread && unread.count > 0) {
+      const badge = document.createElement("span");
+      badge.className = "unread-badge" + (unread.mention ? " mention" : "");
+      badge.textContent = unread.count > 9 ? "9+" : String(unread.count);
+      li.appendChild(badge);
+    }
     if (!isSelf) {
       li.addEventListener("click", () => switchToDm(u.username));
     }
@@ -652,6 +908,69 @@ function renderOnlineList(users) {
   });
 
   if (currentView.type === "dm") updateChatHeaderStatus();
+}
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Подсвечивает @упоминания в тексте сообщения (безопасно экранируя остальной текст)
+function renderTextWithMentions(text) {
+  const escaped = escapeHtml(text);
+  return escaped.replace(/(^|[\s(])@([\wа-яёА-ЯЁ_-]{2,24})/gu, (match, pre, name) => {
+    const isMe = myName && name.toLowerCase() === myName.toLowerCase();
+    return `${pre}<span class="mention-tag${isMe ? " mention-me" : ""}">@${name}</span>`;
+  });
+}
+
+function isMentioned(text) {
+  if (!text || !myName) return false;
+  const re = new RegExp("(^|[^\\wа-яё])@" + escapeRegExp(myName) + "(?![\\wа-яё])", "iu");
+  return re.test(text);
+}
+
+function renderChannelUnreadBadge() {
+  if (unreadChannel > 0) {
+    channelUnreadBadge.textContent = unreadChannel > 9 ? "9+" : String(unreadChannel);
+    channelUnreadBadge.classList.remove("hidden");
+  } else {
+    channelUnreadBadge.classList.add("hidden");
+  }
+}
+
+function markChannelRead() {
+  unreadChannel = 0;
+  renderChannelUnreadBadge();
+}
+
+function markDmRead(username) {
+  if (unreadDm.has(username)) {
+    unreadDm.delete(username);
+    renderOnlineList(onlineUsersList);
+  }
+}
+
+function markGroupRead(groupId) {
+  if (unreadGroup.has(groupId)) {
+    unreadGroup.delete(groupId);
+    renderGroupList();
+  }
+}
+
+function bumpUnreadDm(username, mention) {
+  const cur = unreadDm.get(username) || { count: 0, mention: false };
+  cur.count += 1;
+  cur.mention = cur.mention || mention;
+  unreadDm.set(username, cur);
+  renderOnlineList(onlineUsersList);
+}
+
+function bumpUnreadGroup(groupId, mention) {
+  const cur = unreadGroup.get(groupId) || { count: 0, mention: false };
+  cur.count += 1;
+  cur.mention = cur.mention || mention;
+  unreadGroup.set(groupId, cur);
+  renderGroupList();
 }
 
 function escapeHtml(str) {
@@ -674,9 +993,24 @@ function renderAvatarGrid() {
   });
 }
 
+function renderStatusPicker() {
+  statusPicker.querySelectorAll(".status-opt").forEach((btn) => {
+    btn.classList.toggle("selected", btn.dataset.status === popoverSelectedStatus);
+  });
+}
+
+statusPicker.querySelectorAll(".status-opt").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    popoverSelectedStatus = btn.dataset.status;
+    renderStatusPicker();
+  });
+});
+
 function openProfilePopover() {
   popoverSelectedAvatar = myAvatar;
+  popoverSelectedStatus = myStatus;
   renderAvatarGrid();
+  renderStatusPicker();
   profilePopover.classList.remove("hidden");
 }
 
@@ -695,14 +1029,152 @@ document.addEventListener("click", () => closeProfilePopover());
 
 saveProfileBtn.addEventListener("click", () => {
   myAvatar = popoverSelectedAvatar;
+  myStatus = popoverSelectedStatus;
+  autoAway = false;
   renderMeAvatar();
-  if (socket) socket.emit("user:update", { avatar: myAvatar });
+  renderMeStatusDot();
+  if (socket) socket.emit("user:update", { avatar: myAvatar, status: myStatus });
   closeProfilePopover();
 });
+
+function renderMeStatusDot() {
+  meStatusDot.className = "me-status-dot " + myStatus;
+}
 
 logoutBtn.addEventListener("click", () => {
   localStorage.removeItem("token");
   window.location.reload();
+});
+
+openSecurityBtn.addEventListener("click", () => {
+  closeProfilePopover();
+  openSecurityModal();
+});
+
+// ================= Пароль и безопасность =================
+function authHeader() {
+  return { Authorization: "Bearer " + localStorage.getItem("token") };
+}
+
+async function openSecurityModal() {
+  securityError.textContent = "";
+  currentPasswordInput.value = "";
+  changePasswordInput.value = "";
+  twofaSetupBlock.classList.add("hidden");
+  securityModal.classList.remove("hidden");
+  try {
+    const res = await fetch("/api/2fa/status", { headers: authHeader() });
+    const data = await res.json();
+    if (data.enabled) {
+      twofaDisabledBlock.classList.add("hidden");
+      twofaEnabledBlock.classList.remove("hidden");
+    } else {
+      twofaDisabledBlock.classList.remove("hidden");
+      twofaEnabledBlock.classList.add("hidden");
+    }
+  } catch (e) {
+    // не удалось получить статус 2FA — просто оставим блок скрытым
+  }
+}
+
+securityCloseBtn.addEventListener("click", () => securityModal.classList.add("hidden"));
+
+changePasswordBtn.addEventListener("click", async () => {
+  const currentPassword = currentPasswordInput.value;
+  const newPassword = changePasswordInput.value;
+  if (!currentPassword || !newPassword) {
+    securityError.textContent = "Заполните оба поля пароля";
+    return;
+  }
+  if (newPassword.length < 6) {
+    securityError.textContent = "Новый пароль должен быть не короче 6 символов";
+    return;
+  }
+  securityError.textContent = "Сохранение...";
+  try {
+    const res = await fetch("/api/change-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeader() },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      securityError.textContent = data.error || "Не удалось сменить пароль";
+      return;
+    }
+    securityError.textContent = "Пароль изменён ✓";
+    currentPasswordInput.value = "";
+    changePasswordInput.value = "";
+  } catch (e) {
+    securityError.textContent = "Не удалось связаться с сервером";
+  }
+});
+
+twofaSetupBtn.addEventListener("click", async () => {
+  securityError.textContent = "";
+  try {
+    const res = await fetch("/api/2fa/setup", { method: "POST", headers: authHeader() });
+    const data = await res.json();
+    if (!res.ok) {
+      securityError.textContent = data.error || "Не удалось начать настройку";
+      return;
+    }
+    twofaQrImg.src = data.qrDataUrl;
+    twofaSecretText.textContent = "Секрет (если не получается отсканировать QR): " + data.secret;
+    twofaConfirmInput.value = "";
+    twofaSetupBlock.classList.remove("hidden");
+  } catch (e) {
+    securityError.textContent = "Не удалось связаться с сервером";
+  }
+});
+
+twofaConfirmBtn.addEventListener("click", async () => {
+  const code = twofaConfirmInput.value.trim();
+  if (!code) return;
+  securityError.textContent = "";
+  try {
+    const res = await fetch("/api/2fa/enable", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeader() },
+      body: JSON.stringify({ code }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      securityError.textContent = data.error || "Неверный код";
+      return;
+    }
+    twofaSetupBlock.classList.add("hidden");
+    twofaDisabledBlock.classList.add("hidden");
+    twofaEnabledBlock.classList.remove("hidden");
+  } catch (e) {
+    securityError.textContent = "Не удалось связаться с сервером";
+  }
+});
+
+twofaDisableBtn.addEventListener("click", async () => {
+  const password = twofaDisablePasswordInput.value;
+  if (!password) {
+    securityError.textContent = "Введите пароль для отключения 2FA";
+    return;
+  }
+  securityError.textContent = "";
+  try {
+    const res = await fetch("/api/2fa/disable", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeader() },
+      body: JSON.stringify({ password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      securityError.textContent = data.error || "Не удалось отключить 2FA";
+      return;
+    }
+    twofaDisablePasswordInput.value = "";
+    twofaEnabledBlock.classList.add("hidden");
+    twofaDisabledBlock.classList.remove("hidden");
+  } catch (e) {
+    securityError.textContent = "Не удалось связаться с сервером";
+  }
 });
 
 // --- Аутентификация ---
@@ -710,6 +1182,9 @@ logoutBtn.addEventListener("click", () => {
 function setAuthMode(mode) {
   authMode = mode;
   connectError.textContent = "";
+  pendingTempToken = null;
+  twofaFieldGroup.classList.add("hidden");
+  usernameInput.disabled = false;
   if (mode === "login") {
     connectSubtitle.textContent = "Войдите в свой аккаунт";
     connectBtn.textContent = "Войти";
@@ -736,11 +1211,26 @@ function setAuthMode(mode) {
     passwordFieldGroup.classList.add("hidden");
     recoveryFieldGroup.classList.remove("hidden");
     forgotPasswordLink.parentElement.classList.add("hidden");
+  } else if (mode === "twofa") {
+    connectSubtitle.textContent = "Введите код из приложения-аутентификатора";
+    connectBtn.textContent = "Подтвердить";
+    authSwitchText.textContent = "";
+    authSwitchLink.textContent = "Назад";
+    passwordFieldGroup.classList.add("hidden");
+    recoveryFieldGroup.classList.add("hidden");
+    twofaFieldGroup.classList.remove("hidden");
+    forgotPasswordLink.parentElement.classList.add("hidden");
+    usernameInput.disabled = true;
+    twofaCodeInput.focus();
   }
 }
 
 authSwitchLink.addEventListener("click", (e) => {
   e.preventDefault();
+  if (authMode === "twofa") {
+    setAuthMode("login");
+    return;
+  }
   setAuthMode(authMode === "login" ? "register" : "login");
 });
 
@@ -751,6 +1241,35 @@ forgotPasswordLink.addEventListener("click", (e) => {
 
 async function submitAuth() {
   const username = usernameInput.value.trim();
+
+  if (authMode === "twofa") {
+    const code = twofaCodeInput.value.trim();
+    if (!code || !pendingTempToken) {
+      connectError.textContent = "Введите код";
+      return;
+    }
+    connectError.textContent = "Проверка кода...";
+    connectBtn.disabled = true;
+    try {
+      const res = await fetch("/api/login/2fa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tempToken: pendingTempToken, code }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        connectError.textContent = data.error || "Неверный код";
+        connectBtn.disabled = false;
+        return;
+      }
+      localStorage.setItem("token", data.token);
+      connectWithToken(data.token);
+    } catch (err) {
+      connectError.textContent = "Не удалось связаться с сервером";
+      connectBtn.disabled = false;
+    }
+    return;
+  }
 
   if (authMode === "forgot") {
     const recoveryCode = recoveryCodeInput.value.trim();
@@ -806,6 +1325,13 @@ async function submitAuth() {
       return;
     }
 
+    if (data.need2FA) {
+      pendingTempToken = data.tempToken;
+      connectBtn.disabled = false;
+      setAuthMode("twofa");
+      return;
+    }
+
     localStorage.setItem("token", data.token);
 
     if (authMode === "register" && data.recoveryCode) {
@@ -830,6 +1356,7 @@ passwordInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submit
 usernameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") passwordInput.focus(); });
 newPasswordInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitAuth(); });
 recoveryCodeInput.addEventListener("keydown", (e) => { if (e.key === "Enter") newPasswordInput.focus(); });
+twofaCodeInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitAuth(); });
 
 function connectWithToken(token) {
   socket = io({ auth: { token } });
@@ -837,7 +1364,8 @@ function connectWithToken(token) {
 
   socket.on("connect", () => {
     myAvatar = null;
-    socket.emit("user:join", { avatar: myAvatar });
+    socket.emit("user:join", { avatar: myAvatar, status: myStatus });
+    fetchIceServers();
   });
 
   socket.on("connect_error", (err) => {
@@ -866,11 +1394,18 @@ function connectWithToken(token) {
 
   socket.on("message:new", (msg) => {
     channelHistory.push(msg);
-    if (currentView.type === "channel") {
+    const viewing = currentView.type === "channel";
+    if (viewing) {
       addMessage(msg, "author");
-      if (msg.author !== myName) playNotificationSound();
-    } else if (msg.author !== myName) {
+    }
+    if (msg.author !== myName) {
       playNotificationSound();
+      const mention = isMentioned(msg.text);
+      if (!viewing) {
+        unreadChannel += 1;
+        renderChannelUnreadBadge();
+      }
+      maybeNotify(`#general — ${msg.author}`, msg.text || "Вложение", !viewing || mention);
     }
   });
 
@@ -890,10 +1425,15 @@ function connectWithToken(token) {
     if (!dmCache.has(other)) dmCache.set(other, []);
     dmCache.get(other).push(msg);
 
-    if (currentView.type === "dm" && currentView.withUser === other) {
+    const viewing = currentView.type === "dm" && currentView.withUser === other;
+    if (viewing) {
       addMessage(msg, "from");
     }
-    if (msg.from !== myName) playNotificationSound();
+    if (msg.from !== myName) {
+      playNotificationSound();
+      if (!viewing) bumpUnreadDm(other, true);
+      maybeNotify(msg.from, msg.text || "Вложение", true);
+    }
   });
 
   socket.on("dm:updated", (msg) => {
@@ -923,6 +1463,20 @@ function connectWithToken(token) {
     addSystemMessage(`Группа «${group.name}» создана`);
   });
 
+  socket.on("group:updated", (group) => {
+    const existing = groupsList.find((g) => g.id === group.id);
+    if (existing) Object.assign(existing, group);
+    else groupsList.push(group);
+    renderGroupList();
+    if (currentView.type === "group" && currentView.groupId === group.id) {
+      currentView.name = group.name;
+      updateHeaderAndInput();
+    }
+    if (groupSettingsGroupId === group.id && !groupSettingsModal.classList.contains("hidden")) {
+      renderGroupSettingsMembers(group);
+    }
+  });
+
   socket.on("group:removed", ({ groupId }) => {
     const idx = groupsList.findIndex((g) => g.id === groupId);
     const wasCurrent = currentView.type === "group" && currentView.groupId === groupId;
@@ -945,10 +1499,17 @@ function connectWithToken(token) {
   socket.on("group:message:new", (msg) => {
     if (!groupCache.has(msg.groupId)) groupCache.set(msg.groupId, []);
     groupCache.get(msg.groupId).push(msg);
-    if (currentView.type === "group" && currentView.groupId === msg.groupId) {
+    const viewing = currentView.type === "group" && currentView.groupId === msg.groupId;
+    if (viewing) {
       addMessage(msg, "author");
     }
-    if (msg.author !== myName) playNotificationSound();
+    if (msg.author !== myName) {
+      playNotificationSound();
+      const mention = isMentioned(msg.text);
+      if (!viewing) bumpUnreadGroup(msg.groupId, mention);
+      const group = groupsList.find((g) => g.id === msg.groupId);
+      maybeNotify(`${group ? group.name : "Группа"} — ${msg.author}`, msg.text || "Вложение", !viewing || mention);
+    }
   });
 
   socket.on("group:message:updated", (msg) => {
@@ -997,6 +1558,30 @@ if (savedToken) {
   }
   connectWithToken(savedToken);
 }
+
+// ================= Авто-статус "Отошёл" при бездействии =================
+function resetIdleTimer() {
+  if (autoAway && myStatus === "away" && socket) {
+    autoAway = false;
+    myStatus = "online";
+    renderMeStatusDot();
+    socket.emit("status:update", { status: myStatus });
+  }
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    // Не трогаем статус, если пользователь сам выбрал "Не беспокоить"
+    if (myStatus === "online" && socket) {
+      autoAway = true;
+      myStatus = "away";
+      renderMeStatusDot();
+      socket.emit("status:update", { status: myStatus });
+    }
+  }, IDLE_AWAY_MS);
+}
+["mousemove", "keydown", "click", "touchstart"].forEach((evt) =>
+  document.addEventListener(evt, resetIdleTimer, { passive: true })
+);
+resetIdleTimer();
 
 channelGeneralEl.addEventListener("click", switchToChannel);
 
@@ -1111,7 +1696,20 @@ messageInput.addEventListener("input", () => {
 // для прототипа это приемлемо, для продакшена стоит добавить бесплатный TURN
 // (например, Metered.ca) в массив ICE_SERVERS ниже.
 
-const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+let ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+
+async function fetchIceServers() {
+  try {
+    const res = await fetch("/api/ice-servers", { headers: authHeader() });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (Array.isArray(data.iceServers) && data.iceServers.length) {
+      ICE_SERVERS = data.iceServers;
+    }
+  } catch (e) {
+    // не удалось получить ICE-серверы — останемся на публичном STUN
+  }
+}
 
 let localStream = null; // микрофон
 let screenStream = null; // показ экрана (только когда включён)
