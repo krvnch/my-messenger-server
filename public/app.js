@@ -2,15 +2,29 @@ let socket = null;
 let myName = "";
 let myAvatar = null;
 let onlineUsersList = []; // [{ username, avatar }]
-let authMode = "login"; // "login" | "register"
+let authMode = "login"; // "login" | "register" | "forgot"
 
-// Текущий вид: { type: "channel" } или { type: "dm", withUser: "Имя" }
+// Текущий вид: { type: "channel" } | { type: "dm", withUser } | { type: "group", groupId, name }
 let currentView = { type: "channel" };
 
 // Кэш истории личных переписок, чтобы не запрашивать заново при переключении
 const dmCache = new Map(); // username -> [messages]
 const channelHistory = []; // общий канал
 const lastSeenCache = new Map(); // username -> iso string | null (null = никогда не было видно)
+
+// Группы
+const groupsList = []; // [{id, name, owner, members}]
+const groupCache = new Map(); // groupId -> [messages]
+
+// Печатает…
+const typingTimers = new Map(); // key -> timeout id (авто-скрытие индикатора)
+let myTypingActive = false;
+let myTypingTimeout = null;
+
+// Ответ на сообщение (reply)
+let pendingReply = null; // { id, author, text }
+
+const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 const AVATAR_EMOJIS = ["😀", "😎", "🤖", "🐱", "🐶", "🦊", "🐼", "🐸", "🦄", "🌟", "🔥", "⚡", "🌈", "🍀", "🎧", "🎮", "📚", "☕"];
 
@@ -64,7 +78,85 @@ const avatarGrid = document.getElementById("avatar-grid");
 const saveProfileBtn = document.getElementById("save-profile-btn");
 const logoutBtn = document.getElementById("logout-btn");
 
+const themeToggleBtn = document.getElementById("theme-toggle-btn");
+const soundToggleBtn = document.getElementById("sound-toggle-btn");
+const typingIndicatorEl = document.getElementById("typing-indicator");
+
+const passwordFieldGroup = document.getElementById("password-field-group");
+const recoveryFieldGroup = document.getElementById("recovery-field-group");
+const recoveryCodeInput = document.getElementById("recovery-code-input");
+const newPasswordInput = document.getElementById("new-password-input");
+const forgotPasswordLink = document.getElementById("forgot-password-link");
+const recoveryCodeModal = document.getElementById("recovery-code-modal");
+const recoveryCodeDisplay = document.getElementById("recovery-code-display");
+const recoveryCodeOkBtn = document.getElementById("recovery-code-ok-btn");
+
+const replyPreview = document.getElementById("reply-preview");
+const replyPreviewText = document.getElementById("reply-preview-text");
+const replyRemoveBtn = document.getElementById("reply-remove-btn");
+
+const groupListEl = document.getElementById("group-list");
+const createGroupBtn = document.getElementById("create-group-btn");
+const createGroupModal = document.getElementById("create-group-modal");
+const groupNameInput = document.getElementById("group-name-input");
+const groupMembersList = document.getElementById("group-members-list");
+const groupCreateCancelBtn = document.getElementById("group-create-cancel-btn");
+const groupCreateConfirmBtn = document.getElementById("group-create-confirm-btn");
+const groupDeleteBtn = document.getElementById("group-delete-btn");
+
 let popoverSelectedAvatar = null;
+
+// ================= Тема (светлая/тёмная) =================
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  themeToggleBtn.textContent = theme === "light" ? "☀️" : "🌙";
+}
+(function initTheme() {
+  const saved = localStorage.getItem("theme") || "dark";
+  applyTheme(saved);
+})();
+themeToggleBtn.addEventListener("click", () => {
+  const current = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+  const next = current === "light" ? "dark" : "light";
+  localStorage.setItem("theme", next);
+  applyTheme(next);
+});
+
+// ================= Звук нового сообщения =================
+let soundEnabled = localStorage.getItem("soundEnabled") !== "off";
+function updateSoundBtn() {
+  soundToggleBtn.textContent = soundEnabled ? "🔔" : "🔕";
+}
+updateSoundBtn();
+soundToggleBtn.addEventListener("click", () => {
+  soundEnabled = !soundEnabled;
+  localStorage.setItem("soundEnabled", soundEnabled ? "on" : "off");
+  updateSoundBtn();
+});
+
+let audioCtx = null;
+function playNotificationSound() {
+  if (!soundEnabled) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, now);
+    osc.frequency.exponentialRampToValueAtTime(660, now + 0.12);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.18, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(now);
+    osc.stop(now + 0.24);
+  } catch (e) {
+    // Web Audio недоступен — просто без звука
+  }
+}
 
 function openSidebar() {
   sidebarEl.classList.add("open");
@@ -124,20 +216,158 @@ function formatFileSize(bytes) {
   return (bytes / (1024 * 1024)).toFixed(1) + " МБ";
 }
 
-function addMessage(author, text, time, attachment) {
-  const row = document.createElement("div");
+// Возвращает { emitReact, emitEdit, emitDelete } функции для текущего представления,
+// применимые к конкретному сообщению msg.
+function actionsFor(msg) {
+  if (currentView.type === "channel") {
+    return {
+      react: (emoji) => socket.emit("message:react", { id: msg.id, emoji }),
+      edit: (text) => socket.emit("message:edit", { id: msg.id, text }),
+      del: () => socket.emit("message:delete", { id: msg.id }),
+    };
+  } else if (currentView.type === "dm") {
+    return {
+      react: (emoji) => socket.emit("dm:react", { id: msg.id, to: currentView.withUser, emoji }),
+      edit: (text) => socket.emit("dm:edit", { id: msg.id, to: currentView.withUser, text }),
+      del: () => socket.emit("dm:delete", { id: msg.id, to: currentView.withUser }),
+    };
+  } else if (currentView.type === "group") {
+    return {
+      react: (emoji) => socket.emit("group:message:react", { groupId: currentView.groupId, id: msg.id, emoji }),
+      edit: (text) => socket.emit("group:message:edit", { groupId: currentView.groupId, id: msg.id, text }),
+      del: () => socket.emit("group:message:delete", { groupId: currentView.groupId, id: msg.id }),
+    };
+  }
+}
+
+function closeAllEmojiPickers() {
+  document.querySelectorAll(".emoji-picker").forEach((el) => el.remove());
+}
+
+function openEmojiPicker(anchorBtn, msg) {
+  closeAllEmojiPickers();
+  const picker = document.createElement("div");
+  picker.className = "emoji-picker";
+  QUICK_REACTIONS.forEach((emoji) => {
+    const opt = document.createElement("span");
+    opt.className = "emoji-picker-opt";
+    opt.textContent = emoji;
+    opt.addEventListener("click", (e) => {
+      e.stopPropagation();
+      actionsFor(msg).react(emoji);
+      closeAllEmojiPickers();
+    });
+    picker.appendChild(opt);
+  });
+  anchorBtn.parentElement.appendChild(picker);
+  setTimeout(() => document.addEventListener("click", closeAllEmojiPickers, { once: true }), 0);
+}
+
+function startReply(msg, authorLabel) {
+  pendingReply = { id: msg.id, author: authorLabel, text: (msg.text || (msg.attachment ? "Вложение" : "")).slice(0, 120) };
+  replyPreviewText.textContent = `Ответ ${authorLabel}: ${pendingReply.text}`;
+  replyPreview.classList.remove("hidden");
+  messageInput.focus();
+}
+
+replyRemoveBtn.addEventListener("click", () => {
+  pendingReply = null;
+  replyPreview.classList.add("hidden");
+});
+
+function startEditInline(row, msg) {
+  const bubble = row.querySelector(".bubble");
+  const existingText = msg.text || "";
+  const editArea = document.createElement("div");
+  editArea.className = "edit-area";
+  const textarea = document.createElement("input");
+  textarea.className = "edit-input";
+  textarea.type = "text";
+  textarea.maxLength = 1000;
+  textarea.value = existingText;
+  const actionsRow = document.createElement("div");
+  actionsRow.className = "edit-actions";
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "edit-save-btn";
+  saveBtn.textContent = "Сохранить";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "edit-cancel-btn";
+  cancelBtn.textContent = "Отмена";
+  actionsRow.appendChild(saveBtn);
+  actionsRow.appendChild(cancelBtn);
+  editArea.appendChild(textarea);
+  editArea.appendChild(actionsRow);
+
+  if (bubble) bubble.replaceWith(editArea);
+  textarea.focus();
+  textarea.setSelectionRange(existingText.length, existingText.length);
+
+  function commit() {
+    const newText = textarea.value.trim();
+    if (newText && newText !== existingText) actionsFor(msg).edit(newText);
+    else if (bubble) editArea.replaceWith(bubble);
+  }
+  saveBtn.addEventListener("click", commit);
+  textarea.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+    if (e.key === "Escape") { if (bubble) editArea.replaceWith(bubble); }
+  });
+  cancelBtn.addEventListener("click", () => { if (bubble) editArea.replaceWith(bubble); });
+}
+
+function renderReactions(row, msg) {
+  const existing = row.querySelector(".reactions-row");
+  if (existing) existing.remove();
+  const reactions = msg.reactions || {};
+  const entries = Object.entries(reactions).filter(([, users]) => users && users.length);
+  if (!entries.length) return;
+  const wrap = document.createElement("div");
+  wrap.className = "reactions-row";
+  entries.forEach(([emoji, users]) => {
+    const pill = document.createElement("span");
+    pill.className = "reaction-pill" + (users.includes(myName) ? " mine" : "");
+    pill.textContent = `${emoji} ${users.length}`;
+    pill.title = users.join(", ");
+    pill.addEventListener("click", () => actionsFor(msg).react(emoji));
+    wrap.appendChild(pill);
+  });
+  row.appendChild(wrap);
+}
+
+function addMessage(msg, authorField) {
+  const author = msg[authorField];
   const isOwn = author === myName;
-  row.className = "msg-row " + (isOwn ? "own" : "other");
+  const row = document.createElement("div");
+  row.className = "msg-row " + (isOwn ? "own" : "other") + (msg.deleted ? " deleted-msg" : "");
+  row.dataset.msgId = msg.id;
 
   const avatar = avatarOf(author);
   const namePart = isOwn ? "Вы" : author;
 
   const meta = document.createElement("div");
   meta.className = "msg-meta";
-  meta.textContent = `${avatar ? avatar + " " : ""}${namePart} · ${formatTime(time)}`;
+  meta.textContent = `${avatar ? avatar + " " : ""}${namePart} · ${formatTime(msg.time)}${msg.edited ? " · изменено" : ""}`;
   row.appendChild(meta);
 
-  if (attachment) {
+  if (msg.replyTo) {
+    const replyBlock = document.createElement("div");
+    replyBlock.className = "reply-quote";
+    replyBlock.textContent = `↩ ${msg.replyTo.author}: ${msg.replyTo.text}`;
+    row.appendChild(replyBlock);
+  }
+
+  if (msg.deleted) {
+    const bubble = document.createElement("div");
+    bubble.className = "bubble deleted-bubble";
+    bubble.textContent = "Сообщение удалено";
+    row.appendChild(bubble);
+    messagesEl.appendChild(row);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return;
+  }
+
+  if (msg.attachment) {
+    const attachment = msg.attachment;
     if (attachment.mimeType && attachment.mimeType.startsWith("image/")) {
       const img = document.createElement("img");
       img.className = "msg-image";
@@ -170,24 +400,89 @@ function addMessage(author, text, time, attachment) {
     }
   }
 
-  if (text) {
+  if (msg.text) {
     const bubble = document.createElement("div");
     bubble.className = "bubble";
-    bubble.textContent = text;
+    bubble.textContent = msg.text;
     row.appendChild(bubble);
   }
+
+  // Панель действий: ответить / реакция / (для своих) редактировать / удалить
+  const actions = document.createElement("div");
+  actions.className = "msg-actions";
+
+  const replyBtn = document.createElement("button");
+  replyBtn.className = "msg-action-btn";
+  replyBtn.textContent = "↩";
+  replyBtn.title = "Ответить";
+  replyBtn.addEventListener("click", () => startReply(msg, isOwn ? "себе" : author));
+  actions.appendChild(replyBtn);
+
+  const reactBtn = document.createElement("button");
+  reactBtn.className = "msg-action-btn";
+  reactBtn.textContent = "☺";
+  reactBtn.title = "Реакция";
+  reactBtn.addEventListener("click", (e) => { e.stopPropagation(); openEmojiPicker(reactBtn, msg); });
+  actions.appendChild(reactBtn);
+
+  if (isOwn) {
+    const editBtn = document.createElement("button");
+    editBtn.className = "msg-action-btn";
+    editBtn.textContent = "✎";
+    editBtn.title = "Редактировать";
+    editBtn.addEventListener("click", () => startEditInline(row, msg));
+    actions.appendChild(editBtn);
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "msg-action-btn";
+    delBtn.textContent = "🗑";
+    delBtn.title = "Удалить";
+    delBtn.addEventListener("click", () => {
+      if (confirm("Удалить сообщение?")) actionsFor(msg).del();
+    });
+    actions.appendChild(delBtn);
+  }
+
+  row.appendChild(actions);
+  renderReactions(row, msg);
 
   messagesEl.appendChild(row);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+// Обновляет сообщение в кэше и, если оно сейчас видно на экране, перерисовывает
+// его строку на прежнем месте (без прокрутки списка).
+function updateMessageInPlace(msg, list) {
+  const idx = list.findIndex((m) => m.id === msg.id);
+  if (idx !== -1) list[idx] = msg;
+
+  const row = messagesEl.querySelector(`[data-msg-id="${CSS.escape(msg.id)}"]`);
+  if (!row) return;
+
+  const authorField = msg.author !== undefined ? "author" : "from";
+  const placeholder = document.createElement("div");
+  row.replaceWith(placeholder);
+
+  const capture = [];
+  const originalAppend = messagesEl.appendChild.bind(messagesEl);
+  messagesEl.appendChild = (node) => { capture.push(node); return node; };
+  addMessage(msg, authorField);
+  messagesEl.appendChild = originalAppend;
+
+  if (capture[0]) placeholder.replaceWith(capture[0]);
+  else placeholder.remove();
+}
+
 function renderCurrentView() {
   messagesEl.innerHTML = "";
   if (currentView.type === "channel") {
-    channelHistory.forEach((m) => addMessage(m.author, m.text, m.time, m.attachment));
-  } else {
+    channelHistory.forEach((m) => addMessage(m, "author"));
+  } else if (currentView.type === "dm") {
     const list = dmCache.get(currentView.withUser) || [];
-    list.forEach((m) => addMessage(m.from, m.text, m.time, m.attachment));
+    list.forEach((m) => addMessage(m, "from"));
+  } else if (currentView.type === "group") {
+    const list = groupCache.get(currentView.groupId) || [];
+    list.forEach((m) => addMessage(m, "author"));
   }
 }
 
@@ -214,31 +509,47 @@ function updateChatHeaderStatus() {
 }
 
 function updateHeaderAndInput() {
+  groupDeleteBtn.classList.add("hidden");
   if (currentView.type === "channel") {
     chatHeader.querySelector(".chat-header-title").innerHTML = `<span class="channel-hash">#</span> general`;
     messageInput.placeholder = "Написать в #general";
     channelGeneralEl.classList.add("active");
     dmCallBtn.classList.add("hidden");
-  } else {
+  } else if (currentView.type === "dm") {
     chatHeader.querySelector(".chat-header-title").textContent = `Личные сообщения — ${currentView.withUser}`;
     messageInput.placeholder = `Написать ${currentView.withUser}`;
     channelGeneralEl.classList.remove("active");
     dmCallBtn.classList.remove("hidden");
+  } else if (currentView.type === "group") {
+    chatHeader.querySelector(".chat-header-title").innerHTML = `<span class="channel-hash">#</span> ${escapeHtml(currentView.name)}`;
+    messageInput.placeholder = `Написать в ${currentView.name}`;
+    channelGeneralEl.classList.remove("active");
+    dmCallBtn.classList.add("hidden");
+    const group = groupsList.find((g) => g.id === currentView.groupId);
+    if (group && group.owner === myName) groupDeleteBtn.classList.remove("hidden");
   }
   updateChatHeaderStatus();
 }
 
+function clearPendingReply() {
+  pendingReply = null;
+  replyPreview.classList.add("hidden");
+}
+
 function switchToChannel() {
   currentView = { type: "channel" };
+  clearPendingReply();
   updateHeaderAndInput();
   renderCurrentView();
   renderOnlineList(onlineUsersList);
+  renderGroupList();
   messageInput.focus();
   closeSidebar();
 }
 
 function switchToDm(username) {
   currentView = { type: "dm", withUser: username };
+  clearPendingReply();
   updateHeaderAndInput();
 
   if (dmCache.has(username)) {
@@ -248,9 +559,80 @@ function switchToDm(username) {
     socket.emit("dm:history:request", username);
   }
   renderOnlineList(onlineUsersList);
+  renderGroupList();
   messageInput.focus();
   closeSidebar();
 }
+
+function switchToGroup(groupId) {
+  const group = groupsList.find((g) => g.id === groupId);
+  if (!group) return;
+  currentView = { type: "group", groupId, name: group.name };
+  clearPendingReply();
+  updateHeaderAndInput();
+
+  if (groupCache.has(groupId)) {
+    renderCurrentView();
+  } else {
+    messagesEl.innerHTML = "";
+    socket.emit("group:history:request", groupId);
+  }
+  renderOnlineList(onlineUsersList);
+  renderGroupList();
+  messageInput.focus();
+  closeSidebar();
+}
+
+function renderGroupList() {
+  groupListEl.innerHTML = "";
+  groupsList.forEach((g) => {
+    const li = document.createElement("li");
+    const isActive = currentView.type === "group" && currentView.groupId === g.id;
+    li.className = isActive ? "active-dm" : "";
+    li.innerHTML = `<span>👥</span> ${escapeHtml(g.name)}`;
+    li.addEventListener("click", () => switchToGroup(g.id));
+    groupListEl.appendChild(li);
+  });
+}
+
+groupDeleteBtn.addEventListener("click", () => {
+  if (currentView.type !== "group") return;
+  if (confirm(`Удалить группу «${currentView.name}»? Это действие необратимо.`)) {
+    socket.emit("group:remove", { groupId: currentView.groupId });
+  }
+});
+
+// ----- Создание группы -----
+createGroupBtn.addEventListener("click", () => {
+  groupNameInput.value = "";
+  groupMembersList.innerHTML = "";
+  onlineUsersList
+    .filter((u) => u.username !== myName)
+    .forEach((u) => {
+      const opt = document.createElement("label");
+      opt.className = "group-member-opt";
+      opt.innerHTML = `<input type="checkbox" value="${escapeHtml(u.username)}" /> ${u.avatar ? u.avatar + " " : ""}${escapeHtml(u.username)}`;
+      groupMembersList.appendChild(opt);
+    });
+  if (!onlineUsersList.some((u) => u.username !== myName)) {
+    groupMembersList.innerHTML = `<div class="online-hint">Сейчас никого нет в сети — можно создать группу и добавить участников позже (через сообщение им попросите зайти).</div>`;
+  }
+  createGroupModal.classList.remove("hidden");
+  groupNameInput.focus();
+});
+
+groupCreateCancelBtn.addEventListener("click", () => createGroupModal.classList.add("hidden"));
+
+groupCreateConfirmBtn.addEventListener("click", () => {
+  const name = groupNameInput.value.trim();
+  if (!name) {
+    groupNameInput.focus();
+    return;
+  }
+  const members = Array.from(groupMembersList.querySelectorAll("input[type=checkbox]:checked")).map((el) => el.value);
+  socket.emit("group:create", { name, members });
+  createGroupModal.classList.add("hidden");
+});
 
 function renderOnlineList(users) {
   onlineUsersList = users;
@@ -327,20 +709,34 @@ logoutBtn.addEventListener("click", () => {
 
 function setAuthMode(mode) {
   authMode = mode;
+  connectError.textContent = "";
   if (mode === "login") {
     connectSubtitle.textContent = "Войдите в свой аккаунт";
     connectBtn.textContent = "Войти";
     authSwitchText.textContent = "Нет аккаунта?";
     authSwitchLink.textContent = "Зарегистрироваться";
     passwordInput.setAttribute("autocomplete", "current-password");
-  } else {
+    passwordFieldGroup.classList.remove("hidden");
+    recoveryFieldGroup.classList.add("hidden");
+    forgotPasswordLink.parentElement.classList.remove("hidden");
+  } else if (mode === "register") {
     connectSubtitle.textContent = "Создайте новый аккаунт";
     connectBtn.textContent = "Зарегистрироваться";
     authSwitchText.textContent = "Уже есть аккаунт?";
     authSwitchLink.textContent = "Войти";
     passwordInput.setAttribute("autocomplete", "new-password");
+    passwordFieldGroup.classList.remove("hidden");
+    recoveryFieldGroup.classList.add("hidden");
+    forgotPasswordLink.parentElement.classList.remove("hidden");
+  } else if (mode === "forgot") {
+    connectSubtitle.textContent = "Восстановление пароля по коду";
+    connectBtn.textContent = "Сбросить пароль";
+    authSwitchText.textContent = "Вспомнили пароль?";
+    authSwitchLink.textContent = "Войти";
+    passwordFieldGroup.classList.add("hidden");
+    recoveryFieldGroup.classList.remove("hidden");
+    forgotPasswordLink.parentElement.classList.add("hidden");
   }
-  connectError.textContent = "";
 }
 
 authSwitchLink.addEventListener("click", (e) => {
@@ -348,10 +744,45 @@ authSwitchLink.addEventListener("click", (e) => {
   setAuthMode(authMode === "login" ? "register" : "login");
 });
 
+forgotPasswordLink.addEventListener("click", (e) => {
+  e.preventDefault();
+  setAuthMode("forgot");
+});
+
 async function submitAuth() {
   const username = usernameInput.value.trim();
-  const password = passwordInput.value;
 
+  if (authMode === "forgot") {
+    const recoveryCode = recoveryCodeInput.value.trim();
+    const newPassword = newPasswordInput.value;
+    if (!username || !recoveryCode || !newPassword) {
+      connectError.textContent = "Заполните все поля";
+      return;
+    }
+    connectError.textContent = "Сброс пароля...";
+    connectBtn.disabled = true;
+    try {
+      const res = await fetch("/api/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, recoveryCode, newPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        connectError.textContent = data.error || "Не удалось сбросить пароль";
+        connectBtn.disabled = false;
+        return;
+      }
+      localStorage.setItem("token", data.token);
+      connectWithToken(data.token);
+    } catch (err) {
+      connectError.textContent = "Не удалось связаться с сервером";
+      connectBtn.disabled = false;
+    }
+    return;
+  }
+
+  const password = passwordInput.value;
   if (!username || !password) {
     connectError.textContent = "Заполните имя пользователя и пароль";
     return;
@@ -376,6 +807,17 @@ async function submitAuth() {
     }
 
     localStorage.setItem("token", data.token);
+
+    if (authMode === "register" && data.recoveryCode) {
+      recoveryCodeDisplay.textContent = data.recoveryCode;
+      recoveryCodeModal.classList.remove("hidden");
+      recoveryCodeOkBtn.onclick = () => {
+        recoveryCodeModal.classList.add("hidden");
+        connectWithToken(data.token);
+      };
+      return;
+    }
+
     connectWithToken(data.token);
   } catch (err) {
     connectError.textContent = "Не удалось связаться с сервером";
@@ -386,6 +828,8 @@ async function submitAuth() {
 connectBtn.addEventListener("click", submitAuth);
 passwordInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitAuth(); });
 usernameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") passwordInput.focus(); });
+newPasswordInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitAuth(); });
+recoveryCodeInput.addEventListener("keydown", (e) => { if (e.key === "Enter") newPasswordInput.focus(); });
 
 function connectWithToken(token) {
   socket = io({ auth: { token } });
@@ -422,7 +866,16 @@ function connectWithToken(token) {
 
   socket.on("message:new", (msg) => {
     channelHistory.push(msg);
-    if (currentView.type === "channel") addMessage(msg.author, msg.text, msg.time, msg.attachment);
+    if (currentView.type === "channel") {
+      addMessage(msg, "author");
+      if (msg.author !== myName) playNotificationSound();
+    } else if (msg.author !== myName) {
+      playNotificationSound();
+    }
+  });
+
+  socket.on("message:updated", (msg) => {
+    updateMessageInPlace(msg, channelHistory);
   });
 
   socket.on("dm:history", ({ withUser, messages }) => {
@@ -438,14 +891,91 @@ function connectWithToken(token) {
     dmCache.get(other).push(msg);
 
     if (currentView.type === "dm" && currentView.withUser === other) {
-      addMessage(msg.from, msg.text, msg.time, msg.attachment);
+      addMessage(msg, "from");
     }
+    if (msg.from !== myName) playNotificationSound();
+  });
+
+  socket.on("dm:updated", (msg) => {
+    const other = msg.from === myName ? msg.to : msg.from;
+    const list = dmCache.get(other) || [];
+    updateMessageInPlace(msg, list);
   });
 
   socket.on("lastseen:response", ({ username, lastSeen }) => {
     lastSeenCache.set(username, lastSeen);
     if (currentView.type === "dm" && currentView.withUser === username) {
       updateChatHeaderStatus();
+    }
+  });
+
+  // ----- Группы -----
+  socket.on("group:list", (list) => {
+    groupsList.length = 0;
+    groupsList.push(...list);
+    renderGroupList();
+  });
+
+  socket.on("group:created", (group) => {
+    if (!groupsList.some((g) => g.id === group.id)) groupsList.push(group);
+    else Object.assign(groupsList.find((g) => g.id === group.id), group);
+    renderGroupList();
+    addSystemMessage(`Группа «${group.name}» создана`);
+  });
+
+  socket.on("group:removed", ({ groupId }) => {
+    const idx = groupsList.findIndex((g) => g.id === groupId);
+    const wasCurrent = currentView.type === "group" && currentView.groupId === groupId;
+    if (idx !== -1) groupsList.splice(idx, 1);
+    groupCache.delete(groupId);
+    renderGroupList();
+    if (wasCurrent) {
+      addSystemMessage("Группа была удалена");
+      switchToChannel();
+    }
+  });
+
+  socket.on("group:history", ({ groupId, messages }) => {
+    groupCache.set(groupId, messages);
+    if (currentView.type === "group" && currentView.groupId === groupId) {
+      renderCurrentView();
+    }
+  });
+
+  socket.on("group:message:new", (msg) => {
+    if (!groupCache.has(msg.groupId)) groupCache.set(msg.groupId, []);
+    groupCache.get(msg.groupId).push(msg);
+    if (currentView.type === "group" && currentView.groupId === msg.groupId) {
+      addMessage(msg, "author");
+    }
+    if (msg.author !== myName) playNotificationSound();
+  });
+
+  socket.on("group:message:updated", (msg) => {
+    const list = groupCache.get(msg.groupId) || [];
+    updateMessageInPlace(msg, list);
+  });
+
+  // ----- Печатает... -----
+  socket.on("typing:update", ({ scope, target, username, typing }) => {
+    if (username === myName) return;
+    const relevant =
+      (scope === "channel" && currentView.type === "channel") ||
+      (scope === "dm" && currentView.type === "dm" && currentView.withUser === username) ||
+      (scope === "group" && currentView.type === "group" && currentView.groupId === target);
+    if (!relevant) return;
+
+    const key = scope + ":" + (target || "channel") + ":" + username;
+    if (typing) {
+      typingIndicatorEl.textContent = `${username} печатает…`;
+      typingIndicatorEl.classList.remove("hidden");
+      clearTimeout(typingTimers.get(key));
+      typingTimers.set(key, setTimeout(() => {
+        typingIndicatorEl.classList.add("hidden");
+      }, 4000));
+    } else {
+      clearTimeout(typingTimers.get(key));
+      typingIndicatorEl.classList.add("hidden");
     }
   });
 
@@ -523,15 +1053,54 @@ messageForm.addEventListener("submit", (e) => {
   if (!text && !pendingAttachment) return;
   if (!socket) return;
 
+  const replyTo = pendingReply ? { id: pendingReply.id, author: pendingReply.author, text: pendingReply.text } : null;
+
   if (currentView.type === "channel") {
-    socket.emit("message:send", { text, attachment: pendingAttachment });
-  } else {
-    socket.emit("dm:send", { to: currentView.withUser, text, attachment: pendingAttachment });
+    socket.emit("message:send", { text, attachment: pendingAttachment, replyTo });
+  } else if (currentView.type === "dm") {
+    socket.emit("dm:send", { to: currentView.withUser, text, attachment: pendingAttachment, replyTo });
+  } else if (currentView.type === "group") {
+    socket.emit("group:send", { groupId: currentView.groupId, text, attachment: pendingAttachment, replyTo });
   }
 
   messageInput.value = "";
   pendingAttachment = null;
   attachmentPreview.classList.add("hidden");
+  clearPendingReply();
+  stopTyping();
+});
+
+// ----- Индикатор "печатает..." для собственного набора текста -----
+function currentTypingScope() {
+  if (currentView.type === "channel") return { scope: "channel" };
+  if (currentView.type === "dm") return { scope: "dm", target: currentView.withUser };
+  if (currentView.type === "group") return { scope: "group", target: currentView.groupId };
+  return null;
+}
+
+function startTyping() {
+  if (!socket) return;
+  const ctx = currentTypingScope();
+  if (!ctx) return;
+  if (!myTypingActive) {
+    myTypingActive = true;
+    socket.emit("typing:start", ctx);
+  }
+  clearTimeout(myTypingTimeout);
+  myTypingTimeout = setTimeout(stopTyping, 2500);
+}
+
+function stopTyping() {
+  if (!socket || !myTypingActive) return;
+  myTypingActive = false;
+  clearTimeout(myTypingTimeout);
+  const ctx = currentTypingScope();
+  if (ctx) socket.emit("typing:stop", ctx);
+}
+
+messageInput.addEventListener("input", () => {
+  if (messageInput.value.trim()) startTyping();
+  else stopTyping();
 });
 
 // ================= Звонки (WebRTC) =================
