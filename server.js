@@ -61,7 +61,7 @@ fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 //   выполнять его как HTML/JS, даже если расширение подделано.
 // - Content-Disposition: attachment для всего, кроме картинок — файл
 //   будет скачиваться, а не открываться и выполняться прямо в браузере.
-const INLINE_SAFE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+const INLINE_SAFE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".webm", ".ogg", ".m4a", ".mp3", ".wav", ".mp4"]);
 app.use(
   "/uploads",
   express.static(UPLOADS_DIR, {
@@ -90,6 +90,8 @@ const ALLOWED_MIME_TYPES = new Set([
   "application/vnd.ms-powerpoint",
   "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   "application/zip",
+  // Голосовые сообщения — разные браузеры записывают в разных форматах
+  "audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav", "audio/x-m4a", "audio/mp3",
 ]);
 function fileFilter(req, file, cb) {
   if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
