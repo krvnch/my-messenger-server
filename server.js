@@ -10,6 +10,9 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
+const rateLimit = require("express-rate-limit");
+const speakeasy = require("speakeasy");
+const QRCode = require("qrcode");
 const { Server } = require("socket.io");
 const { MongoClient } = require("mongodb");
 
@@ -17,6 +20,8 @@ const PORT = process.env.PORT || 3001;
 // В проде обязательно задай свой JWT_SECRET через переменную окружения!
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString("hex");
 const JWT_EXPIRES_IN = "30d";
+// Короткоживущий токен для второго шага входа (пароль верный, ждём код 2FA)
+const TWOFA_TEMP_EXPIRES_IN = "10m";
 
 const app = express();
 app.use(express.json());
@@ -28,20 +33,69 @@ const io = new Server(server, {
 app.use(express.static(path.join(__dirname, "public")));
 
 // --- Загрузка файлов и картинок ---
+// По умолчанию файлы пишутся на локальный диск (для Render это временное
+// хранилище — теряется при каждом деплое/рестарте). Чтобы файлы хранились
+// постоянно, задай переменные окружения для S3-совместимого хранилища
+// (подходит и Cloudflare R2, и AWS S3, и Backblaze B2):
+//   S3_ENDPOINT           — для R2: https://<account_id>.r2.cloudflarestorage.com
+//   S3_BUCKET             — имя бакета
+//   S3_ACCESS_KEY_ID
+//   S3_SECRET_ACCESS_KEY
+//   S3_REGION             — для R2 можно "auto"
+//   S3_PUBLIC_BASE_URL    — публичный домен, по которому отдаются файлы
+//                           (например, R2 public bucket URL или свой CDN)
 const UPLOADS_DIR = path.join(__dirname, "uploads");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 app.use("/uploads", express.static(UPLOADS_DIR));
 
 const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15 МБ
 
-const uploadStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOADS_DIR),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname || "").slice(0, 10);
-    cb(null, crypto.randomBytes(16).toString("hex") + ext);
-  },
-});
-const upload = multer({ storage: uploadStorage, limits: { fileSize: MAX_FILE_SIZE } });
+const S3_ENABLED = !!(process.env.S3_BUCKET && process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY);
+let s3Client = null;
+if (S3_ENABLED) {
+  const { S3Client } = require("@aws-sdk/client-s3");
+  s3Client = new S3Client({
+    region: process.env.S3_REGION || "auto",
+    endpoint: process.env.S3_ENDPOINT || undefined,
+    credentials: {
+      accessKeyId: process.env.S3_ACCESS_KEY_ID,
+      secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
+    },
+    forcePathStyle: !!process.env.S3_FORCE_PATH_STYLE,
+  });
+  console.log("Постоянное файловое хранилище: S3/R2 (" + process.env.S3_BUCKET + ")");
+} else {
+  console.log("S3_BUCKET не задан — файлы пишутся на локальный диск (не переживёт редеплой на Render)");
+}
+
+const upload = S3_ENABLED
+  ? multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_SIZE } })
+  : multer({
+      storage: multer.diskStorage({
+        destination: (req, file, cb) => cb(null, UPLOADS_DIR),
+        filename: (req, file, cb) => {
+          const ext = path.extname(file.originalname || "").slice(0, 10);
+          cb(null, crypto.randomBytes(16).toString("hex") + ext);
+        },
+      }),
+      limits: { fileSize: MAX_FILE_SIZE },
+    });
+
+async function uploadToS3(file) {
+  const { PutObjectCommand } = require("@aws-sdk/client-s3");
+  const ext = path.extname(file.originalname || "").slice(0, 10);
+  const key = "uploads/" + crypto.randomBytes(16).toString("hex") + ext;
+  await s3Client.send(
+    new PutObjectCommand({
+      Bucket: process.env.S3_BUCKET,
+      Key: key,
+      Body: file.buffer,
+      ContentType: file.mimetype,
+    })
+  );
+  const base = (process.env.S3_PUBLIC_BASE_URL || "").replace(/\/$/, "");
+  return base ? `${base}/${key}` : `/${key}`;
+}
 
 function requireAuth(req, res, next) {
   const header = req.headers.authorization || "";
@@ -57,19 +111,62 @@ function requireAuth(req, res, next) {
 }
 
 app.post("/api/upload", requireAuth, (req, res) => {
-  upload.single("file")(req, res, (err) => {
+  upload.single("file")(req, res, async (err) => {
     if (err) {
       const msg = err.code === "LIMIT_FILE_SIZE" ? "Файл больше 15 МБ" : "Не удалось загрузить файл";
       return res.status(400).json({ error: msg });
     }
     if (!req.file) return res.status(400).json({ error: "Файл не получен" });
-    res.json({
-      url: "/uploads/" + req.file.filename,
-      name: req.file.originalname,
-      mimeType: req.file.mimetype,
-      size: req.file.size,
-    });
+    try {
+      const url = S3_ENABLED ? await uploadToS3(req.file) : "/uploads/" + req.file.filename;
+      res.json({
+        url,
+        name: req.file.originalname,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+      });
+    } catch (uploadErr) {
+      console.error("Ошибка загрузки в S3:", uploadErr);
+      res.status(500).json({ error: "Не удалось сохранить файл" });
+    }
   });
+});
+
+// --- ICE-серверы для WebRTC-звонков ---
+// Публичный STUN бесплатный, но за строгим NAT (частая ситуация в мобильных
+// сетях) звонок пройдёт только через TURN-сервер. Задай переменные окружения,
+// чтобы отдавать клиенту рабочий TURN:
+//   TURN_URLS        — через запятую, например "turn:turn.example.com:3478,turns:turn.example.com:5349"
+//   TURN_USERNAME
+//   TURN_CREDENTIAL
+// Бесплатные варианты: развернуть свой coturn на дешёвом VPS, либо
+// использовать бесплатный лимит сервиса вроде Metered.ca / Twilio NTS.
+app.get("/api/ice-servers", requireAuth, (req, res) => {
+  const servers = [{ urls: "stun:stun.l.google.com:19302" }];
+  if (process.env.TURN_URLS && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
+    servers.push({
+      urls: process.env.TURN_URLS.split(",").map((s) => s.trim()),
+      username: process.env.TURN_USERNAME,
+      credential: process.env.TURN_CREDENTIAL,
+    });
+  }
+  res.json({ iceServers: servers });
+});
+
+// --- Rate-limiting на регистрацию/вход (защита от брутфорса) ---
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 минут
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Слишком много попыток. Попробуйте позже." },
+});
+const strictAuthLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Слишком много попыток входа. Попробуйте позже." },
 });
 
 // Один общий канал "general" для прототипа
@@ -82,9 +179,14 @@ const typingChannel = new Set(); // username-ов, которые сейчас �
 const typingDm = new Map(); // "userA|userB" -> Set(username), кто печатает в этой переписке
 
 // --- Группы ---
-const groups = new Map(); // groupId -> { id, name, owner, members: [username], createdAt }
+const groups = new Map(); // groupId -> { id, name, description, avatar, owner, admins: [username], members: [username], createdAt }
 const groupMessages = new Map(); // groupId -> [ {id, author, text, time, attachment, replyTo, reactions, edited, deleted} ]
 const typingGroup = new Map(); // groupId -> Set(username)
+
+const VALID_STATUSES = new Set(["online", "away", "dnd"]);
+function normalizeStatus(status) {
+  return VALID_STATUSES.has(status) ? status : "online";
+}
 
 function broadcastUserList() {
   io.emit("users:update", Array.from(onlineUsers.values()));
@@ -189,6 +291,48 @@ async function updateUserPassword(username, passwordHash) {
   }
 }
 
+// --- Хелперы для 2FA (TOTP) ---
+async function setUserTwoFactorTempSecret(username, tempSecret) {
+  if (usersCollection) {
+    await usersCollection.updateOne({ username }, { $set: { twoFactorTempSecret: tempSecret } });
+  } else {
+    const u = memoryUsers.get(username);
+    if (u) u.twoFactorTempSecret = tempSecret;
+  }
+}
+
+async function enableUserTwoFactor(username, secret) {
+  if (usersCollection) {
+    await usersCollection.updateOne(
+      { username },
+      { $set: { twoFactorEnabled: true, twoFactorSecret: secret }, $unset: { twoFactorTempSecret: "" } }
+    );
+  } else {
+    const u = memoryUsers.get(username);
+    if (u) {
+      u.twoFactorEnabled = true;
+      u.twoFactorSecret = secret;
+      delete u.twoFactorTempSecret;
+    }
+  }
+}
+
+async function disableUserTwoFactor(username) {
+  if (usersCollection) {
+    await usersCollection.updateOne(
+      { username },
+      { $set: { twoFactorEnabled: false }, $unset: { twoFactorSecret: "", twoFactorTempSecret: "" } }
+    );
+  } else {
+    const u = memoryUsers.get(username);
+    if (u) {
+      u.twoFactorEnabled = false;
+      delete u.twoFactorSecret;
+      delete u.twoFactorTempSecret;
+    }
+  }
+}
+
 function makeToken(username) {
   return jwt.sign({ username }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 }
@@ -202,7 +346,7 @@ function generateRecoveryCode() {
 }
 
 // --- REST: регистрация и вход ---
-app.post("/api/register", async (req, res) => {
+app.post("/api/register", authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body || {};
     if (!username || !password) {
@@ -232,7 +376,7 @@ app.post("/api/register", async (req, res) => {
   }
 });
 
-app.post("/api/login", async (req, res) => {
+app.post("/api/login", strictAuthLimiter, async (req, res) => {
   try {
     const { username, password } = req.body || {};
     if (!username || !password) {
@@ -246,6 +390,12 @@ app.post("/api/login", async (req, res) => {
     if (!ok) {
       return res.status(401).json({ error: "Неверное имя пользователя или пароль" });
     }
+    if (user.twoFactorEnabled) {
+      // Пароль верный, но нужен ещё код из приложения-аутентификатора —
+      // выдаём короткоживущий промежуточный токен вместо полноценной сессии.
+      const tempToken = jwt.sign({ username, purpose: "2fa" }, JWT_SECRET, { expiresIn: TWOFA_TEMP_EXPIRES_IN });
+      return res.json({ need2FA: true, tempToken });
+    }
     const token = makeToken(username);
     res.json({ token, username });
   } catch (err) {
@@ -254,12 +404,125 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
+// --- REST: второй шаг входа — проверка кода 2FA ---
+app.post("/api/login/2fa", strictAuthLimiter, async (req, res) => {
+  try {
+    const { tempToken, code } = req.body || {};
+    if (!tempToken || !code) {
+      return res.status(400).json({ error: "Укажите код подтверждения" });
+    }
+    let payload;
+    try {
+      payload = jwt.verify(tempToken, JWT_SECRET);
+    } catch (e) {
+      return res.status(401).json({ error: "Сессия входа истекла, попробуйте снова" });
+    }
+    if (payload.purpose !== "2fa") return res.status(401).json({ error: "Недействительный токен" });
+    const user = await findUser(payload.username);
+    if (!user || !user.twoFactorEnabled || !user.twoFactorSecret) {
+      return res.status(400).json({ error: "2FA не включена для этого аккаунта" });
+    }
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: "base32",
+      token: String(code).trim(),
+      window: 1,
+    });
+    if (!verified) {
+      return res.status(401).json({ error: "Неверный код" });
+    }
+    const token = makeToken(payload.username);
+    res.json({ token, username: payload.username });
+  } catch (err) {
+    console.error("Ошибка входа (2FA):", err);
+    res.status(500).json({ error: "Внутренняя ошибка сервера" });
+  }
+});
+
+// --- REST: смена пароля из настроек (нужен текущий пароль) ---
+app.post("/api/change-password", requireAuth, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: "Заполните все поля" });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: "Новый пароль должен быть не короче 6 символов" });
+    }
+    const user = await findUser(req.username);
+    if (!user) return res.status(404).json({ error: "Пользователь не найден" });
+    const ok = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!ok) return res.status(401).json({ error: "Текущий пароль неверен" });
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await updateUserPassword(req.username, passwordHash);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Ошибка смены пароля:", err);
+    res.status(500).json({ error: "Внутренняя ошибка сервера" });
+  }
+});
+
+// --- REST: настройка 2FA (TOTP) ---
+app.post("/api/2fa/setup", requireAuth, async (req, res) => {
+  try {
+    const secret = speakeasy.generateSecret({ length: 20, name: `Флоу (${req.username})` });
+    await setUserTwoFactorTempSecret(req.username, secret.base32);
+    const qrDataUrl = await QRCode.toDataURL(secret.otpauth_url);
+    res.json({ secret: secret.base32, qrDataUrl });
+  } catch (err) {
+    console.error("Ошибка настройки 2FA:", err);
+    res.status(500).json({ error: "Не удалось начать настройку 2FA" });
+  }
+});
+
+app.post("/api/2fa/enable", requireAuth, async (req, res) => {
+  try {
+    const { code } = req.body || {};
+    const user = await findUser(req.username);
+    if (!user || !user.twoFactorTempSecret) {
+      return res.status(400).json({ error: "Сначала запросите настройку 2FA" });
+    }
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorTempSecret,
+      encoding: "base32",
+      token: String(code || "").trim(),
+      window: 1,
+    });
+    if (!verified) return res.status(400).json({ error: "Неверный код, попробуйте ещё раз" });
+    await enableUserTwoFactor(req.username, user.twoFactorTempSecret);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Ошибка включения 2FA:", err);
+    res.status(500).json({ error: "Внутренняя ошибка сервера" });
+  }
+});
+
+app.post("/api/2fa/disable", requireAuth, async (req, res) => {
+  try {
+    const { password } = req.body || {};
+    const user = await findUser(req.username);
+    if (!user) return res.status(404).json({ error: "Пользователь не найден" });
+    const ok = await bcrypt.compare(password || "", user.passwordHash);
+    if (!ok) return res.status(401).json({ error: "Неверный пароль" });
+    await disableUserTwoFactor(req.username);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Ошибка отключения 2FA:", err);
+    res.status(500).json({ error: "Внутренняя ошибка сервера" });
+  }
+});
+
+app.get("/api/2fa/status", requireAuth, async (req, res) => {
+  const user = await findUser(req.username);
+  res.json({ enabled: !!(user && user.twoFactorEnabled) });
+});
+
 // --- REST: восстановление пароля по коду восстановления ---
 // Примечание: в прототипе нет почтового сервиса, поэтому восстановление
 // работает через одноразовый код, который выдаётся один раз при регистрации.
 // Пользователь должен сохранить его сам. Для продакшена стоит заменить
 // на отправку кода по email через сервис вроде SendGrid/Resend.
-app.post("/api/forgot-password", async (req, res) => {
+app.post("/api/forgot-password", strictAuthLimiter, async (req, res) => {
   try {
     const { username, recoveryCode, newPassword } = req.body || {};
     if (!username || !recoveryCode || !newPassword) {
@@ -292,7 +555,21 @@ function groupsForUser(username) {
 }
 
 function sanitizeGroup(g) {
-  return { id: g.id, name: g.name, owner: g.owner, members: g.members, createdAt: g.createdAt };
+  return {
+    id: g.id,
+    name: g.name,
+    description: g.description || "",
+    avatar: g.avatar || null,
+    owner: g.owner,
+    admins: g.admins || [],
+    members: g.members,
+    createdAt: g.createdAt,
+  };
+}
+
+// Владелец группы — всегда админ; плюс явный список назначенных админов.
+function isGroupAdmin(group, username) {
+  return !!group && (group.owner === username || (group.admins || []).includes(username));
 }
 
 // --- Socket.io: авторизация по токену ---
@@ -325,9 +602,9 @@ function canModify(message, username) {
 io.on("connection", (socket) => {
   console.log("Новое подключение:", socket.id, "как", socket.username);
 
-  socket.on("user:join", ({ avatar } = {}) => {
+  socket.on("user:join", ({ avatar, status } = {}) => {
     const username = socket.username; // берём из проверенного токена, не от клиента
-    onlineUsers.set(socket.id, { username, avatar: avatar || null });
+    onlineUsers.set(socket.id, { username, avatar: avatar || null, status: normalizeStatus(status) });
     socket.join(CHANNEL);
 
     // Присоединяем к комнатам всех групп, в которых пользователь состоит
@@ -341,10 +618,22 @@ io.on("connection", (socket) => {
     io.to(CHANNEL).emit("system:message", `${username} присоединился(-ась) к чату`);
   });
 
-  socket.on("user:update", ({ avatar } = {}) => {
+  socket.on("user:update", ({ avatar, status } = {}) => {
     const current = onlineUsers.get(socket.id);
     if (!current) return;
-    onlineUsers.set(socket.id, { username: socket.username, avatar: avatar || null });
+    onlineUsers.set(socket.id, {
+      username: socket.username,
+      avatar: avatar !== undefined ? avatar || null : current.avatar,
+      status: status !== undefined ? normalizeStatus(status) : current.status,
+    });
+    broadcastUserList();
+  });
+
+  // Отдельное лёгкое событие для смены статуса (например, авто-"Отошёл" по бездействию)
+  socket.on("status:update", ({ status } = {}) => {
+    const current = onlineUsers.get(socket.id);
+    if (!current) return;
+    current.status = normalizeStatus(status);
     broadcastUserList();
   });
 
@@ -541,14 +830,17 @@ io.on("connection", (socket) => {
   }
 
   // --- Группы ---
-  socket.on("group:create", ({ name, members } = {}) => {
+  socket.on("group:create", ({ name, description, avatar, members } = {}) => {
     const owner = socket.username;
     if (!owner || !name || !name.trim()) return;
     const cleanMembers = Array.from(new Set([owner, ...((members || []).filter((m) => typeof m === "string"))]));
     const group = {
       id: crypto.randomBytes(8).toString("hex"),
       name: name.trim().slice(0, 40),
+      description: (description || "").trim().slice(0, 200),
+      avatar: avatar || null,
       owner,
+      admins: [],
       members: cleanMembers,
       createdAt: new Date().toISOString(),
     };
@@ -563,6 +855,77 @@ io.on("connection", (socket) => {
       if (s) s.join(groupRoom(group.id));
     });
     io.to(groupRoom(group.id)).emit("group:created", sanitized);
+  });
+
+  function persistGroup(group) {
+    if (groupsCollection) {
+      groupsCollection
+        .updateOne({ id: group.id }, { $set: sanitizeGroup(group) })
+        .catch(console.error);
+    }
+  }
+
+  // Название/описание/аватар — может менять владелец или любой админ группы
+  socket.on("group:update", ({ groupId, name, description, avatar } = {}) => {
+    const group = groups.get(groupId);
+    if (!group || !isGroupAdmin(group, socket.username)) return;
+    if (typeof name === "string" && name.trim()) group.name = name.trim().slice(0, 40);
+    if (typeof description === "string") group.description = description.trim().slice(0, 200);
+    if (avatar !== undefined) group.avatar = avatar || null;
+    persistGroup(group);
+    io.to(groupRoom(groupId)).emit("group:updated", sanitizeGroup(group));
+  });
+
+  // Добавление участников — владелец или админ
+  socket.on("group:members:add", ({ groupId, members } = {}) => {
+    const group = groups.get(groupId);
+    if (!group || !isGroupAdmin(group, socket.username)) return;
+    const toAdd = (members || []).filter((m) => typeof m === "string" && !group.members.includes(m));
+    if (!toAdd.length) return;
+    group.members.push(...toAdd);
+    persistGroup(group);
+    const sanitized = sanitizeGroup(group);
+    findSocketsByUsernames(toAdd).forEach((sid) => {
+      const s = io.sockets.sockets.get(sid);
+      if (s) s.join(groupRoom(group.id));
+    });
+    io.to(groupRoom(groupId)).emit("group:updated", sanitized);
+  });
+
+  // Удаление (кик) участника — владелец или админ; владельца выгнать нельзя,
+  // админа может выгнать только сам владелец.
+  socket.on("group:members:remove", ({ groupId, username } = {}) => {
+    const group = groups.get(groupId);
+    if (!group || !isGroupAdmin(group, socket.username)) return;
+    if (username === group.owner) return;
+    if ((group.admins || []).includes(username) && socket.username !== group.owner) return;
+    const idx = group.members.indexOf(username);
+    if (idx === -1) return;
+    group.members.splice(idx, 1);
+    group.admins = (group.admins || []).filter((a) => a !== username);
+    persistGroup(group);
+    const targetSocketId = findSocketByUsername(username);
+    if (targetSocketId) {
+      const s = io.sockets.sockets.get(targetSocketId);
+      if (s) {
+        s.leave(groupRoom(groupId));
+        s.emit("group:removed", { groupId });
+      }
+    }
+    io.to(groupRoom(groupId)).emit("group:updated", sanitizeGroup(group));
+  });
+
+  // Назначение/снятие админа — только владелец
+  socket.on("group:admins:set", ({ groupId, username, isAdmin } = {}) => {
+    const group = groups.get(groupId);
+    if (!group || group.owner !== socket.username) return;
+    if (username === group.owner || !group.members.includes(username)) return;
+    group.admins = group.admins || [];
+    const has = group.admins.includes(username);
+    if (isAdmin && !has) group.admins.push(username);
+    else if (!isAdmin && has) group.admins = group.admins.filter((a) => a !== username);
+    persistGroup(group);
+    io.to(groupRoom(groupId)).emit("group:updated", sanitizeGroup(group));
   });
 
   socket.on("group:remove", ({ groupId } = {}) => {
