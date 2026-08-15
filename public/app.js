@@ -1695,6 +1695,85 @@ function pickAudioMimeType() {
   return ""; // браузер сам выберет формат по умолчанию
 }
 
+// Браузер, который записывает голос (MediaRecorder), не всегда корректно
+// прописывает длительность в заголовок файла — из-за этого часть браузеров
+// показывает "0:00" и вообще отказывается проигрывать. Поэтому перед отправкой
+// декодируем запись и пересобираем её в обычный WAV — его длительность всегда
+// верна, и проигрывает его абсолютно любой браузер. Заодно понижаем частоту
+// дискретизации до 16 кГц и сводим в моно (для голоса этого более чем
+// достаточно) — иначе несжатый WAV на 5 минут весил бы слишком много.
+function interleave(inputL, inputR) {
+  const length = inputL.length + inputR.length;
+  const result = new Float32Array(length);
+  let index = 0;
+  let inputIndex = 0;
+  while (index < length) {
+    result[index++] = inputL[inputIndex];
+    result[index++] = inputR[inputIndex];
+    inputIndex++;
+  }
+  return result;
+}
+
+function writeString(view, offset, string) {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i));
+  }
+}
+
+function floatTo16BitPCM(view, offset, input) {
+  for (let i = 0; i < input.length; i++, offset += 2) {
+    const s = Math.max(-1, Math.min(1, input[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+}
+
+function audioBufferToWavBlob(buffer) {
+  const numChannels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const samples = numChannels === 2 ? interleave(buffer.getChannelData(0), buffer.getChannelData(1)) : buffer.getChannelData(0);
+
+  const bytesPerSample = 2;
+  const blockAlign = numChannels * bytesPerSample;
+  const arrayBuf = new ArrayBuffer(44 + samples.length * bytesPerSample);
+  const view = new DataView(arrayBuf);
+
+  writeString(view, 0, "RIFF");
+  view.setUint32(4, 36 + samples.length * bytesPerSample, true);
+  writeString(view, 8, "WAVE");
+  writeString(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true); // bits per sample
+  writeString(view, 36, "data");
+  view.setUint32(40, samples.length * bytesPerSample, true);
+
+  floatTo16BitPCM(view, 44, samples);
+  return new Blob([view], { type: "audio/wav" });
+}
+
+async function decodeAndResampleToWav(rawBlob) {
+  const arrayBuffer = await rawBlob.arrayBuffer();
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  const decodeCtx = new AudioContextClass();
+  const decoded = await decodeCtx.decodeAudioData(arrayBuffer);
+  decodeCtx.close();
+
+  const targetSampleRate = 16000; // с запасом хватает для голоса, файл лёгкий
+  const offlineCtx = new OfflineAudioContext(1, Math.ceil(decoded.duration * targetSampleRate), targetSampleRate);
+  const source = offlineCtx.createBufferSource();
+  source.buffer = decoded;
+  source.connect(offlineCtx.destination);
+  source.start(0);
+  const rendered = await offlineCtx.startRendering();
+
+  return { wavBlob: audioBufferToWavBlob(rendered), durationSeconds: Math.round(rendered.duration) };
+}
+
 function formatRecordingTime(ms) {
   const totalSeconds = Math.floor(ms / 1000);
   const m = Math.floor(totalSeconds / 60);
@@ -1762,11 +1841,20 @@ function stopRecording(shouldSend) {
         recordedChunks = [];
         return;
       }
-      const durationSeconds = Math.round((Date.now() - recordingStartTime) / 1000);
-      const blob = new Blob(recordedChunks, { type: mimeTypeUsed });
+      const rawBlob = new Blob(recordedChunks, { type: mimeTypeUsed });
       recordedChunks = [];
-      if (blob.size < 500) return; // слишком короткая запись, скорее всего случайный тап
-      await uploadAndSendVoice(blob, mimeTypeUsed, durationSeconds);
+      if (rawBlob.size < 500) return; // слишком короткая запись, скорее всего случайный тап
+
+      addSystemMessage("Отправка голосового сообщения...");
+      try {
+        const { wavBlob, durationSeconds } = await decodeAndResampleToWav(rawBlob);
+        await uploadAndSendVoice(wavBlob, "audio/wav", durationSeconds);
+      } catch (err) {
+        // Если браузер не смог перекодировать (редкий случай) — отправляем как есть,
+        // это лучше, чем совсем ничего не отправить
+        const fallbackDuration = Math.round((Date.now() - recordingStartTime) / 1000);
+        await uploadAndSendVoice(rawBlob, mimeTypeUsed, fallbackDuration);
+      }
     },
     { once: true }
   );
@@ -1775,10 +1863,9 @@ function stopRecording(shouldSend) {
 }
 
 async function uploadAndSendVoice(blob, mimeType, durationSeconds) {
-  const ext = mimeType.includes("mp4") ? "m4a" : mimeType.includes("ogg") ? "ogg" : "webm";
+  const ext = mimeType.includes("wav") ? "wav" : mimeType.includes("mp4") ? "m4a" : mimeType.includes("ogg") ? "ogg" : "webm";
   const file = new File([blob], `voice-message.${ext}`, { type: mimeType });
 
-  addSystemMessage("Отправка голосового сообщения...");
   try {
     const formData = new FormData();
     formData.append("file", file);
