@@ -3,8 +3,6 @@ let myName = "";
 let myAvatar = localStorage.getItem("myAvatar") || null;
 let myStatus = localStorage.getItem("myStatus") || "online"; // "online" | "away" | "dnd"
 let onlineUsersList = []; // [{ username, avatar, status }]
-let authMode = "login"; // "login" | "register" | "forgot"
-let pendingTempToken = null; // хранит tempToken между шагом пароля и шагом 2FA при входе
 
 // Непрочитанные сообщения: channel — число, dm/group — Map(key -> {count, mention})
 let unreadChannel = 0;
@@ -46,12 +44,9 @@ const AVATAR_EMOJIS = ["😀", "😎", "🤖", "🐱", "🐶", "🦊", "🐼", "
 const connectScreen = document.getElementById("connect-screen");
 const app = document.getElementById("app");
 const usernameInput = document.getElementById("username-input");
-const passwordInput = document.getElementById("password-input");
 const connectBtn = document.getElementById("connect-btn");
 const connectError = document.getElementById("connect-error");
 const connectSubtitle = document.getElementById("connect-subtitle");
-const authSwitchText = document.getElementById("auth-switch-text");
-const authSwitchLink = document.getElementById("auth-switch-link");
 
 const messagesEl = document.getElementById("messages");
 const messageForm = document.getElementById("message-form");
@@ -78,6 +73,9 @@ const sidebarOverlay = document.getElementById("sidebar-overlay");
 
 const dmCallBtn = document.getElementById("dm-call-btn");
 const channelCallBtn = document.getElementById("channel-call-btn");
+const megaCallLabel = document.getElementById("mega-call-label");
+const megaCallSub = document.getElementById("mega-call-sub");
+const megaCallIcon = document.getElementById("mega-call-icon");
 const callBar = document.getElementById("call-bar");
 const callBarTitle = document.getElementById("call-bar-title");
 const callBarParticipants = document.getElementById("call-bar-participants");
@@ -90,6 +88,10 @@ const incomingCallAvatar = document.getElementById("incoming-call-avatar");
 const acceptCallBtn = document.getElementById("accept-call-btn");
 const declineCallBtn = document.getElementById("decline-call-btn");
 const remoteAudioContainer = document.getElementById("remote-audio-container");
+const screenShareViewer = document.getElementById("screen-share-viewer");
+const screenShareVideo = document.getElementById("screen-share-video");
+const screenShareLabel = document.getElementById("screen-share-label");
+const screenShareCloseBtn = document.getElementById("screen-share-close-btn");
 
 const profileTrigger = document.getElementById("profile-trigger");
 const profilePopover = document.getElementById("profile-popover");
@@ -100,17 +102,6 @@ const logoutBtn = document.getElementById("logout-btn");
 const themeToggleBtn = document.getElementById("theme-toggle-btn");
 const soundToggleBtn = document.getElementById("sound-toggle-btn");
 const typingIndicatorEl = document.getElementById("typing-indicator");
-
-const passwordFieldGroup = document.getElementById("password-field-group");
-const recoveryFieldGroup = document.getElementById("recovery-field-group");
-const recoveryCodeInput = document.getElementById("recovery-code-input");
-const newPasswordInput = document.getElementById("new-password-input");
-const forgotPasswordLink = document.getElementById("forgot-password-link");
-const recoveryCodeModal = document.getElementById("recovery-code-modal");
-const recoveryCodeDisplay = document.getElementById("recovery-code-display");
-const recoveryCodeOkBtn = document.getElementById("recovery-code-ok-btn");
-const twofaFieldGroup = document.getElementById("twofa-field-group");
-const twofaCodeInput = document.getElementById("twofa-code-input");
 
 const replyPreview = document.getElementById("reply-preview");
 const replyPreviewText = document.getElementById("reply-preview-text");
@@ -142,24 +133,6 @@ const channelUnreadBadge = document.getElementById("channel-unread-badge");
 const notifToggleBtn = document.getElementById("notif-toggle-btn");
 const meStatusDot = document.getElementById("me-status-dot");
 const statusPicker = document.getElementById("status-picker");
-
-const openSecurityBtn = document.getElementById("open-security-btn");
-const securityModal = document.getElementById("security-modal");
-const securityCloseBtn = document.getElementById("security-close-btn");
-const currentPasswordInput = document.getElementById("current-password-input");
-const changePasswordInput = document.getElementById("change-password-input");
-const changePasswordBtn = document.getElementById("change-password-btn");
-const securityError = document.getElementById("security-error");
-const twofaDisabledBlock = document.getElementById("twofa-disabled-block");
-const twofaSetupBlock = document.getElementById("twofa-setup-block");
-const twofaEnabledBlock = document.getElementById("twofa-enabled-block");
-const twofaSetupBtn = document.getElementById("twofa-setup-btn");
-const twofaQrImg = document.getElementById("twofa-qr-img");
-const twofaSecretText = document.getElementById("twofa-secret-text");
-const twofaConfirmInput = document.getElementById("twofa-confirm-input");
-const twofaConfirmBtn = document.getElementById("twofa-confirm-btn");
-const twofaDisablePasswordInput = document.getElementById("twofa-disable-password-input");
-const twofaDisableBtn = document.getElementById("twofa-disable-btn");
 
 let popoverSelectedAvatar = null;
 let popoverSelectedStatus = "online";
@@ -1074,276 +1047,27 @@ logoutBtn.addEventListener("click", () => {
   window.location.reload();
 });
 
-openSecurityBtn.addEventListener("click", () => {
-  closeProfilePopover();
-  openSecurityModal();
-});
-
-// ================= Пароль и безопасность =================
 function authHeader() {
   return { Authorization: "Bearer " + localStorage.getItem("token") };
 }
 
-async function openSecurityModal() {
-  securityError.textContent = "";
-  currentPasswordInput.value = "";
-  changePasswordInput.value = "";
-  twofaSetupBlock.classList.add("hidden");
-  securityModal.classList.remove("hidden");
-  try {
-    const res = await fetch("/api/2fa/status", { headers: authHeader() });
-    const data = await res.json();
-    if (data.enabled) {
-      twofaDisabledBlock.classList.add("hidden");
-      twofaEnabledBlock.classList.remove("hidden");
-    } else {
-      twofaDisabledBlock.classList.remove("hidden");
-      twofaEnabledBlock.classList.add("hidden");
-    }
-  } catch (e) {
-    // не удалось получить статус 2FA — просто оставим блок скрытым
-  }
-}
-
-securityCloseBtn.addEventListener("click", () => securityModal.classList.add("hidden"));
-
-changePasswordBtn.addEventListener("click", async () => {
-  const currentPassword = currentPasswordInput.value;
-  const newPassword = changePasswordInput.value;
-  if (!currentPassword || !newPassword) {
-    securityError.textContent = "Заполните оба поля пароля";
-    return;
-  }
-  if (newPassword.length < 6) {
-    securityError.textContent = "Новый пароль должен быть не короче 6 символов";
-    return;
-  }
-  securityError.textContent = "Сохранение...";
-  try {
-    const res = await fetch("/api/change-password", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeader() },
-      body: JSON.stringify({ currentPassword, newPassword }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      securityError.textContent = data.error || "Не удалось сменить пароль";
-      return;
-    }
-    securityError.textContent = "Пароль изменён ✓";
-    currentPasswordInput.value = "";
-    changePasswordInput.value = "";
-  } catch (e) {
-    securityError.textContent = "Не удалось связаться с сервером";
-  }
-});
-
-twofaSetupBtn.addEventListener("click", async () => {
-  securityError.textContent = "";
-  try {
-    const res = await fetch("/api/2fa/setup", { method: "POST", headers: authHeader() });
-    const data = await res.json();
-    if (!res.ok) {
-      securityError.textContent = data.error || "Не удалось начать настройку";
-      return;
-    }
-    twofaQrImg.src = data.qrDataUrl;
-    twofaSecretText.textContent = "Секрет (если не получается отсканировать QR): " + data.secret;
-    twofaConfirmInput.value = "";
-    twofaSetupBlock.classList.remove("hidden");
-  } catch (e) {
-    securityError.textContent = "Не удалось связаться с сервером";
-  }
-});
-
-twofaConfirmBtn.addEventListener("click", async () => {
-  const code = twofaConfirmInput.value.trim();
-  if (!code) return;
-  securityError.textContent = "";
-  try {
-    const res = await fetch("/api/2fa/enable", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeader() },
-      body: JSON.stringify({ code }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      securityError.textContent = data.error || "Неверный код";
-      return;
-    }
-    twofaSetupBlock.classList.add("hidden");
-    twofaDisabledBlock.classList.add("hidden");
-    twofaEnabledBlock.classList.remove("hidden");
-  } catch (e) {
-    securityError.textContent = "Не удалось связаться с сервером";
-  }
-});
-
-twofaDisableBtn.addEventListener("click", async () => {
-  const password = twofaDisablePasswordInput.value;
-  if (!password) {
-    securityError.textContent = "Введите пароль для отключения 2FA";
-    return;
-  }
-  securityError.textContent = "";
-  try {
-    const res = await fetch("/api/2fa/disable", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeader() },
-      body: JSON.stringify({ password }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      securityError.textContent = data.error || "Не удалось отключить 2FA";
-      return;
-    }
-    twofaDisablePasswordInput.value = "";
-    twofaEnabledBlock.classList.add("hidden");
-    twofaDisabledBlock.classList.remove("hidden");
-  } catch (e) {
-    securityError.textContent = "Не удалось связаться с сервером";
-  }
-});
-
-// --- Аутентификация ---
-
-function setAuthMode(mode) {
-  authMode = mode;
-  connectError.textContent = "";
-  pendingTempToken = null;
-  twofaFieldGroup.classList.add("hidden");
-  usernameInput.disabled = false;
-  if (mode === "login") {
-    connectSubtitle.textContent = "Войдите в свой аккаунт";
-    connectBtn.textContent = "Войти";
-    authSwitchText.textContent = "Нет аккаунта?";
-    authSwitchLink.textContent = "Зарегистрироваться";
-    passwordInput.setAttribute("autocomplete", "current-password");
-    passwordFieldGroup.classList.remove("hidden");
-    recoveryFieldGroup.classList.add("hidden");
-    forgotPasswordLink.parentElement.classList.remove("hidden");
-  } else if (mode === "register") {
-    connectSubtitle.textContent = "Создайте новый аккаунт";
-    connectBtn.textContent = "Зарегистрироваться";
-    authSwitchText.textContent = "Уже есть аккаунт?";
-    authSwitchLink.textContent = "Войти";
-    passwordInput.setAttribute("autocomplete", "new-password");
-    passwordFieldGroup.classList.remove("hidden");
-    recoveryFieldGroup.classList.add("hidden");
-    forgotPasswordLink.parentElement.classList.remove("hidden");
-  } else if (mode === "forgot") {
-    connectSubtitle.textContent = "Восстановление пароля по коду";
-    connectBtn.textContent = "Сбросить пароль";
-    authSwitchText.textContent = "Вспомнили пароль?";
-    authSwitchLink.textContent = "Войти";
-    passwordFieldGroup.classList.add("hidden");
-    recoveryFieldGroup.classList.remove("hidden");
-    forgotPasswordLink.parentElement.classList.add("hidden");
-  } else if (mode === "twofa") {
-    connectSubtitle.textContent = "Введите код из приложения-аутентификатора";
-    connectBtn.textContent = "Подтвердить";
-    authSwitchText.textContent = "";
-    authSwitchLink.textContent = "Назад";
-    passwordFieldGroup.classList.add("hidden");
-    recoveryFieldGroup.classList.add("hidden");
-    twofaFieldGroup.classList.remove("hidden");
-    forgotPasswordLink.parentElement.classList.add("hidden");
-    usernameInput.disabled = true;
-    twofaCodeInput.focus();
-  }
-}
-
-authSwitchLink.addEventListener("click", (e) => {
-  e.preventDefault();
-  if (authMode === "twofa") {
-    setAuthMode("login");
-    return;
-  }
-  setAuthMode(authMode === "login" ? "register" : "login");
-});
-
-forgotPasswordLink.addEventListener("click", (e) => {
-  e.preventDefault();
-  setAuthMode("forgot");
-});
+// --- Вход по нику, без пароля ---
 
 async function submitAuth() {
   const username = usernameInput.value.trim();
-
-  if (authMode === "twofa") {
-    const code = twofaCodeInput.value.trim();
-    if (!code || !pendingTempToken) {
-      connectError.textContent = "Введите код";
-      return;
-    }
-    connectError.textContent = "Проверка кода...";
-    connectBtn.disabled = true;
-    try {
-      const res = await fetch("/api/login/2fa", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tempToken: pendingTempToken, code }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        connectError.textContent = data.error || "Неверный код";
-        connectBtn.disabled = false;
-        return;
-      }
-      localStorage.setItem("token", data.token);
-      connectWithToken(data.token);
-    } catch (err) {
-      connectError.textContent = "Не удалось связаться с сервером";
-      connectBtn.disabled = false;
-    }
+  if (!username) {
+    connectError.textContent = "Введите ник";
     return;
   }
 
-  if (authMode === "forgot") {
-    const recoveryCode = recoveryCodeInput.value.trim();
-    const newPassword = newPasswordInput.value;
-    if (!username || !recoveryCode || !newPassword) {
-      connectError.textContent = "Заполните все поля";
-      return;
-    }
-    connectError.textContent = "Сброс пароля...";
-    connectBtn.disabled = true;
-    try {
-      const res = await fetch("/api/forgot-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, recoveryCode, newPassword }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        connectError.textContent = data.error || "Не удалось сбросить пароль";
-        connectBtn.disabled = false;
-        return;
-      }
-      localStorage.setItem("token", data.token);
-      connectWithToken(data.token);
-    } catch (err) {
-      connectError.textContent = "Не удалось связаться с сервером";
-      connectBtn.disabled = false;
-    }
-    return;
-  }
-
-  const password = passwordInput.value;
-  if (!username || !password) {
-    connectError.textContent = "Заполните имя пользователя и пароль";
-    return;
-  }
-
-  connectError.textContent = authMode === "login" ? "Вход..." : "Регистрация...";
+  connectError.textContent = "Заходим...";
   connectBtn.disabled = true;
 
   try {
-    const endpoint = authMode === "login" ? "/api/login" : "/api/register";
-    const res = await fetch(endpoint, {
+    const res = await fetch("/api/join", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username }),
     });
     const data = await res.json();
 
@@ -1353,25 +1077,7 @@ async function submitAuth() {
       return;
     }
 
-    if (data.need2FA) {
-      pendingTempToken = data.tempToken;
-      connectBtn.disabled = false;
-      setAuthMode("twofa");
-      return;
-    }
-
     localStorage.setItem("token", data.token);
-
-    if (authMode === "register" && data.recoveryCode) {
-      recoveryCodeDisplay.textContent = data.recoveryCode;
-      recoveryCodeModal.classList.remove("hidden");
-      recoveryCodeOkBtn.onclick = () => {
-        recoveryCodeModal.classList.add("hidden");
-        connectWithToken(data.token);
-      };
-      return;
-    }
-
     connectWithToken(data.token);
   } catch (err) {
     connectError.textContent = "Не удалось связаться с сервером";
@@ -1380,11 +1086,7 @@ async function submitAuth() {
 }
 
 connectBtn.addEventListener("click", submitAuth);
-passwordInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitAuth(); });
-usernameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") passwordInput.focus(); });
-newPasswordInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitAuth(); });
-recoveryCodeInput.addEventListener("keydown", (e) => { if (e.key === "Enter") newPasswordInput.focus(); });
-twofaCodeInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitAuth(); });
+usernameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitAuth(); });
 
 function connectWithToken(token) {
   socket = io({ auth: { token } });
@@ -2040,7 +1742,8 @@ function registerConnectionHooks() {
 
   socket.on("call:room:count", (count) => {
     if (!inChannelCall) {
-      channelCallBtn.textContent = count > 0 ? `🎤 Присоединиться к звонку (${count})` : "🎤 Присоединиться к звонку";
+      megaCallSub.textContent = count > 0 ? `Сейчас в войсе: ${count}` : "";
+      megaCallSub.classList.toggle("hidden", count === 0);
     }
   });
 
@@ -2105,7 +1808,9 @@ function createPeerConnection(onIceCandidate, onTrack) {
   pc.onicecandidate = (e) => {
     if (e.candidate) onIceCandidate(e.candidate.toJSON ? e.candidate.toJSON() : e.candidate);
   };
-  pc.ontrack = (e) => onTrack(e.streams[0]);
+  // Передаём весь трек, а не только stream — нужно различать голос (audio)
+  // и демонстрацию экрана (video), у них разные MediaStream.
+  pc.ontrack = (e) => onTrack(e.streams[0], e.track);
   return pc;
 }
 
@@ -2160,7 +1865,7 @@ declineCallBtn.addEventListener("click", () => {
 async function setupDmPeerConnection(peerUsername, isCaller) {
   const pc = createPeerConnection(
     (candidate) => socket.emit("call:dm:signal", { to: peerUsername, data: candidate }),
-    (stream) => playRemoteStream(peerUsername, stream)
+    (stream, track) => playRemoteStream(peerUsername, stream, track)
   );
   dmCallState.pc = pc;
   localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
@@ -2206,7 +1911,10 @@ async function joinChannelCall() {
     return;
   }
   inChannelCall = true;
-  channelCallBtn.textContent = "🎤 Покинуть звонок";
+  megaCallIcon.textContent = "🔴";
+  megaCallLabel.textContent = "Покинуть войс";
+  megaCallSub.textContent = "Вы в звонке";
+  megaCallSub.classList.remove("hidden");
   channelCallBtn.classList.add("in-call");
   socket.emit("call:room:join");
   showCallBar("Звонок в #general");
@@ -2216,7 +1924,7 @@ async function addChannelPeer(socketId, username, isCaller) {
   if (channelCallPeers.has(socketId)) return channelCallPeers.get(socketId);
   const pc = createPeerConnection(
     (candidate) => socket.emit("call:room:signal", { to: socketId, data: candidate }),
-    (stream) => playRemoteStream(socketId, stream)
+    (stream, track) => playRemoteStream(socketId, stream, track, username)
   );
   localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
   const entry = { username, pc };
@@ -2249,7 +1957,10 @@ function leaveChannelCall() {
   });
   channelCallPeers.clear();
   inChannelCall = false;
-  channelCallBtn.textContent = "🎤 Присоединиться к звонку";
+  megaCallIcon.textContent = "🎤";
+  megaCallLabel.textContent = "Войти в войс";
+  megaCallSub.textContent = "";
+  megaCallSub.classList.add("hidden");
   channelCallBtn.classList.remove("in-call");
   stopScreenShare();
   stopMic();
@@ -2258,25 +1969,55 @@ function leaveChannelCall() {
 
 // ----- Общее: аудио собеседников, мьют, показ экрана, панель звонка -----
 
-function playRemoteStream(key, stream) {
-  let audioEl = document.getElementById("remote-audio-" + key);
+// Аудио-дорожки (голос или звук с экрана) — держим по одному <audio> элементу
+// на каждый уникальный MediaStream, чтобы голос и системный звук демонстрации
+// экрана от одного и того же человека не затирали друг друга.
+function playRemoteStream(key, stream, track, displayName) {
+  if (track && track.kind === "video") {
+    showRemoteScreenShare(key, stream, displayName || key);
+    return;
+  }
+  const elId = "remote-audio-" + key + "-" + stream.id;
+  let audioEl = document.getElementById(elId);
   if (!audioEl) {
     audioEl = document.createElement("audio");
-    audioEl.id = "remote-audio-" + key;
+    audioEl.id = elId;
     audioEl.autoplay = true;
+    audioEl.dataset.peerKey = key;
     remoteAudioContainer.appendChild(audioEl);
   }
   audioEl.srcObject = stream;
 }
 
 function removeRemoteAudio(key) {
-  const audioEl = document.getElementById("remote-audio-" + key);
-  if (audioEl) audioEl.remove();
+  remoteAudioContainer.querySelectorAll(`[data-peer-key="${CSS.escape(String(key))}"]`).forEach((el) => el.remove());
+  hideRemoteScreenShare(key);
 }
 
 function clearRemoteAudio() {
   remoteAudioContainer.innerHTML = "";
+  hideRemoteScreenShare();
 }
+// ----- Просмотр чужой демонстрации экрана -----
+let activeScreenShareKey = null;
+
+function showRemoteScreenShare(key, stream, displayName) {
+  activeScreenShareKey = key;
+  screenShareVideo.srcObject = stream;
+  screenShareLabel.textContent = `Экран: ${displayName}`;
+  screenShareViewer.classList.remove("hidden");
+  const track = stream.getVideoTracks()[0];
+  if (track) track.onended = () => hideRemoteScreenShare(key);
+}
+
+function hideRemoteScreenShare(key) {
+  if (key !== undefined && key !== activeScreenShareKey) return;
+  activeScreenShareKey = null;
+  screenShareVideo.srcObject = null;
+  screenShareViewer.classList.add("hidden");
+}
+
+screenShareCloseBtn.addEventListener("click", () => hideRemoteScreenShare());
 
 function showCallBar(title) {
   callBarTitle.textContent = title;
@@ -2324,28 +2065,68 @@ function activePeerConnections() {
   return pcs;
 }
 
+// Демонстрация экрана в максимальном качестве, которое отдаёт браузер:
+// 1080p / 60fps. Реальный результат зависит от того, что показывает ОС
+// (некоторые системы ограничивают захват экрана до 30fps), но мы всегда
+// запрашиваем максимум и поднимаем битрейт, чтобы картинка не мылилась.
+const SCREEN_SHARE_CONSTRAINTS = {
+  video: {
+    width: { ideal: 1920, max: 1920 },
+    height: { ideal: 1080, max: 1080 },
+    frameRate: { ideal: 60, max: 60 },
+  },
+  // Системный звук (звук из игры/видео) — поддерживается не везде,
+  // но если браузер это умеет, гостям будет слышно и звук с экрана.
+  audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+};
+const SCREEN_SHARE_MAX_BITRATE = 8_000_000; // ~8 Мбит/с — с запасом для 1080p60
+
 async function startScreenShare() {
   let stream;
   try {
-    stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    stream = await navigator.mediaDevices.getDisplayMedia(SCREEN_SHARE_CONSTRAINTS);
   } catch (e) {
     return; // пользователь отменил выбор окна/экрана
   }
   screenStream = stream;
   const track = stream.getVideoTracks()[0];
+  // Подсказка браузеру, что это динамичная картинка (видео/игра), а не
+  // статичный текст — так кодировщик выделяет больше бит на движение.
+  if ("contentHint" in track) track.contentHint = "motion";
   isScreenSharing = true;
   toggleScreenBtn.classList.add("active");
 
   // Добавление новой дорожки к уже установленному соединению требует повторного
   // согласования (renegotiation) — создаём и отправляем новый offer вручную.
   for (const pc of activePeerConnections()) {
-    pc.addTrack(track, screenStream);
+    const sender = pc.addTrack(track, screenStream);
+    await applyScreenShareEncoding(sender);
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     sendRenegotiationOffer(pc, offer);
   }
 
+  const audioTrack = stream.getAudioTracks()[0];
+  if (audioTrack) {
+    for (const pc of activePeerConnections()) pc.addTrack(audioTrack, screenStream);
+  }
+
   track.onended = () => stopScreenShare();
+}
+
+// Поднимает битрейт и просит браузер держать 1080p60, а не жертвовать
+// разрешением/fps в пользу экономии канала.
+async function applyScreenShareEncoding(sender) {
+  try {
+    const params = sender.getParameters();
+    if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+    params.encodings[0].maxBitrate = SCREEN_SHARE_MAX_BITRATE;
+    params.encodings[0].maxFramerate = 60;
+    if ("degradationPreference" in params) params.degradationPreference = "maintain-resolution";
+    await sender.setParameters(params);
+  } catch (e) {
+    // Не все браузеры разрешают тонкую настройку — молча продолжаем с дефолтом
+  }
 }
 
 function sendRenegotiationOffer(pc, offer) {
