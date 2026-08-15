@@ -1223,33 +1223,29 @@ function setAuthMode(mode) {
   usernameInput.disabled = false;
   passwordFieldGroup.classList.add("hidden");
   recoveryFieldGroup.classList.add("hidden");
-  forgotPasswordLink.parentElement.classList.add("hidden");
+  if (forgotPasswordLink && forgotPasswordLink.parentElement) {
+    forgotPasswordLink.parentElement.classList.add("hidden");
+  }
+  if (authSwitchText) authSwitchText.textContent = "";
+  if (authSwitchLink) authSwitchLink.textContent = "";
 
   if (mode === "login") {
     connectSubtitle.textContent = "Войдите под ником";
     connectBtn.textContent = "Войти в чат";
-    authSwitchText.textContent = "Нет ника?";
-    authSwitchLink.textContent = "Создать";
     passwordInput.value = "";
     passwordInput.setAttribute("autocomplete", "username");
   } else if (mode === "register") {
     connectSubtitle.textContent = "Создайте свой ник";
     connectBtn.textContent = "Зарегистрироваться";
-    authSwitchText.textContent = "Уже есть ник?";
-    authSwitchLink.textContent = "Войти";
     passwordInput.value = "";
     passwordInput.setAttribute("autocomplete", "username");
   } else if (mode === "forgot") {
     connectSubtitle.textContent = "Восстановление по коду";
     connectBtn.textContent = "Сбросить";
-    authSwitchText.textContent = "Вспомнили?";
-    authSwitchLink.textContent = "Войти";
     recoveryFieldGroup.classList.remove("hidden");
   } else if (mode === "twofa") {
     connectSubtitle.textContent = "Введите код из приложения";
     connectBtn.textContent = "Подтвердить";
-    authSwitchText.textContent = "";
-    authSwitchLink.textContent = "Назад";
     twofaFieldGroup.classList.remove("hidden");
     passwordFieldGroup.classList.add("hidden");
     recoveryFieldGroup.classList.add("hidden");
@@ -1258,19 +1254,23 @@ function setAuthMode(mode) {
   }
 }
 
-authSwitchLink.addEventListener("click", (e) => {
-  e.preventDefault();
-  if (authMode === "twofa") {
-    setAuthMode("login");
-    return;
-  }
-  setAuthMode(authMode === "login" ? "register" : "login");
-});
+if (authSwitchLink) {
+  authSwitchLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    if (authMode === "twofa") {
+      setAuthMode("login");
+      return;
+    }
+    setAuthMode(authMode === "login" ? "register" : "login");
+  });
+}
 
-forgotPasswordLink.addEventListener("click", (e) => {
-  e.preventDefault();
-  setAuthMode("forgot");
-});
+if (forgotPasswordLink) {
+  forgotPasswordLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    setAuthMode("forgot");
+  });
+}
 
 setAuthMode("login");
 
@@ -1374,7 +1374,15 @@ async function submitAuth() {
 
 connectBtn.addEventListener("click", submitAuth);
 passwordInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitAuth(); });
-usernameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") passwordInput.focus(); });
+usernameInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    if (passwordFieldGroup && !passwordFieldGroup.classList.contains("hidden")) {
+      passwordInput.focus();
+    } else {
+      submitAuth();
+    }
+  }
+});
 newPasswordInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitAuth(); });
 recoveryCodeInput.addEventListener("keydown", (e) => { if (e.key === "Enter") newPasswordInput.focus(); });
 twofaCodeInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitAuth(); });
