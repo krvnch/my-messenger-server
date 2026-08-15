@@ -61,6 +61,10 @@ const fileInput = document.getElementById("file-input");
 const attachmentPreview = document.getElementById("attachment-preview");
 const attachmentPreviewName = document.getElementById("attachment-preview-name");
 const attachmentRemoveBtn = document.getElementById("attachment-remove-btn");
+const voiceRecordBtn = document.getElementById("voice-record-btn");
+const voiceRecordingBar = document.getElementById("voice-recording-bar");
+const voiceRecordingTime = document.getElementById("voice-recording-time");
+const voiceCancelBtn = document.getElementById("voice-cancel-btn");
 const onlineList = document.getElementById("online-list");
 const onlineCount = document.getElementById("online-count");
 const meAvatarEl = document.getElementById("me-avatar");
@@ -479,6 +483,19 @@ function addMessage(msg, authorField) {
       img.alt = attachment.name || "изображение";
       img.addEventListener("click", () => window.open(attachment.url, "_blank"));
       row.appendChild(img);
+    } else if (attachment.mimeType && attachment.mimeType.startsWith("audio/")) {
+      const voiceEl = document.createElement("div");
+      voiceEl.className = "voice-message";
+      const icon = document.createElement("span");
+      icon.className = "voice-icon";
+      icon.textContent = "🎙️";
+      const audioEl = document.createElement("audio");
+      audioEl.controls = true;
+      audioEl.src = attachment.url;
+      audioEl.preload = "metadata";
+      voiceEl.appendChild(icon);
+      voiceEl.appendChild(audioEl);
+      row.appendChild(voiceEl);
     } else {
       const link = document.createElement("a");
       link.className = "msg-file-chip";
@@ -1651,6 +1668,143 @@ attachmentRemoveBtn.addEventListener("click", () => {
   pendingAttachment = null;
   attachmentPreview.classList.add("hidden");
 });
+
+// ----- Голосовые сообщения -----
+let mediaRecorder = null;
+let recordedChunks = [];
+let recordingStream = null;
+let recordingStartTime = 0;
+let recordingTimerId = null;
+const MAX_RECORDING_MS = 5 * 60 * 1000; // 5 минут — защита от гигантских файлов
+
+function pickAudioMimeType() {
+  const candidates = ["audio/webm", "audio/mp4", "audio/ogg"];
+  for (const type of candidates) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(type)) {
+      return type;
+    }
+  }
+  return ""; // браузер сам выберет формат по умолчанию
+}
+
+function formatRecordingTime(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function updateRecordingTimer() {
+  const elapsed = Date.now() - recordingStartTime;
+  voiceRecordingTime.textContent = formatRecordingTime(elapsed);
+  if (elapsed >= MAX_RECORDING_MS) stopRecording(false);
+}
+
+async function startRecording() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    addSystemMessage("Этот браузер не поддерживает запись голоса");
+    return;
+  }
+  try {
+    recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    addSystemMessage("Не удалось получить доступ к микрофону");
+    return;
+  }
+
+  const mimeType = pickAudioMimeType();
+  recordedChunks = [];
+  mediaRecorder = mimeType ? new MediaRecorder(recordingStream, { mimeType }) : new MediaRecorder(recordingStream);
+
+  mediaRecorder.addEventListener("dataavailable", (e) => {
+    if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+  });
+
+  mediaRecorder.addEventListener("stop", () => {
+    recordingStream.getTracks().forEach((t) => t.stop());
+    recordingStream = null;
+  });
+
+  mediaRecorder.start();
+  recordingStartTime = Date.now();
+  voiceRecordingTime.textContent = "0:00";
+  voiceRecordingBar.classList.remove("hidden");
+  voiceRecordBtn.classList.add("recording");
+  voiceRecordBtn.setAttribute("aria-label", "Остановить запись");
+  recordingTimerId = setInterval(updateRecordingTimer, 250);
+}
+
+function stopRecording(shouldSend) {
+  if (!mediaRecorder) return;
+
+  clearInterval(recordingTimerId);
+  recordingTimerId = null;
+  voiceRecordingBar.classList.add("hidden");
+  voiceRecordBtn.classList.remove("recording");
+  voiceRecordBtn.setAttribute("aria-label", "Голосовое сообщение");
+
+  const recorderRef = mediaRecorder;
+  const mimeTypeUsed = mediaRecorder.mimeType || "audio/webm";
+  mediaRecorder = null;
+
+  recorderRef.addEventListener(
+    "stop",
+    async () => {
+      if (!shouldSend) {
+        recordedChunks = [];
+        return;
+      }
+      const blob = new Blob(recordedChunks, { type: mimeTypeUsed });
+      recordedChunks = [];
+      if (blob.size < 500) return; // слишком короткая запись, скорее всего случайный тап
+      await uploadAndSendVoice(blob, mimeTypeUsed);
+    },
+    { once: true }
+  );
+
+  recorderRef.stop();
+}
+
+async function uploadAndSendVoice(blob, mimeType) {
+  const ext = mimeType.includes("mp4") ? "m4a" : mimeType.includes("ogg") ? "ogg" : "webm";
+  const file = new File([blob], `voice-message.${ext}`, { type: mimeType });
+
+  addSystemMessage("Отправка голосового сообщения...");
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + localStorage.getItem("token") },
+      body: formData,
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      addSystemMessage(data.error || "Не удалось отправить голосовое сообщение");
+      return;
+    }
+
+    const replyTo = pendingReply ? { id: pendingReply.id, author: pendingReply.author, text: pendingReply.text } : null;
+
+    if (currentView.type === "channel") {
+      socket.emit("message:send", { text: "", attachment: data, replyTo });
+    } else if (currentView.type === "dm") {
+      socket.emit("dm:send", { to: currentView.withUser, text: "", attachment: data, replyTo });
+    } else if (currentView.type === "group") {
+      socket.emit("group:send", { groupId: currentView.groupId, text: "", attachment: data, replyTo });
+    }
+    clearPendingReply();
+  } catch (err) {
+    addSystemMessage("Не удалось отправить голосовое сообщение");
+  }
+}
+
+voiceRecordBtn.addEventListener("click", () => {
+  if (mediaRecorder) stopRecording(true);
+  else startRecording();
+});
+
+voiceCancelBtn.addEventListener("click", () => stopRecording(false));
 
 messageForm.addEventListener("submit", (e) => {
   e.preventDefault();
