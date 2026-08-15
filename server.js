@@ -28,9 +28,6 @@ const io = new Server(server, {
 app.use(express.static(path.join(__dirname, "public")));
 
 // --- Загрузка файлов и картинок ---
-// ВАЖНО: файлы сохраняются на диск сервера. На бесплатном тарифе Render диск
-// не постоянный — при каждом передеплое все загруженные файлы удаляются
-// (сами сообщения в базе останутся, но ссылки на файлы станут битыми).
 const UPLOADS_DIR = path.join(__dirname, "uploads");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 app.use("/uploads", express.static(UPLOADS_DIR));
@@ -77,10 +74,17 @@ app.post("/api/upload", requireAuth, (req, res) => {
 
 // Один общий канал "general" для прототипа
 const CHANNEL = "general";
-const messages = []; // { id, author, text, time }
+const messages = []; // { id, author, text, time, attachment, replyTo, reactions, edited, deleted }
 const onlineUsers = new Map(); // socket.id -> { username, avatar }
 const lastSeen = new Map(); // username -> ISO-время последнего выхода
-const dmConversations = new Map(); // "userA|userB" (отсортированы) -> [{id, from, to, text, time}]
+const dmConversations = new Map(); // "userA|userB" (отсортированы) -> [{id, from, to, text, time, ...}]
+const typingChannel = new Set(); // username-ов, которые сейчас печатают в #general
+const typingDm = new Map(); // "userA|userB" -> Set(username), кто печатает в этой переписке
+
+// --- Группы ---
+const groups = new Map(); // groupId -> { id, name, owner, members: [username], createdAt }
+const groupMessages = new Map(); // groupId -> [ {id, author, text, time, attachment, replyTo, reactions, edited, deleted} ]
+const typingGroup = new Map(); // groupId -> Set(username)
 
 function broadcastUserList() {
   io.emit("users:update", Array.from(onlineUsers.values()));
@@ -97,6 +101,15 @@ function findSocketByUsername(username) {
   return null;
 }
 
+function findSocketsByUsernames(usernames) {
+  const set = new Set(usernames);
+  const ids = [];
+  for (const [socketId, u] of onlineUsers.entries()) {
+    if (set.has(u.username)) ids.push(socketId);
+  }
+  return ids;
+}
+
 // --- Звонки: сервер только передаёт сигналинг (SDP/ICE), само аудио/видео идёт
 // напрямую между браузерами по WebRTC и через сервер не проходит.
 const channelCallParticipants = new Map(); // socket.id -> username (кто сейчас в звонке #general)
@@ -109,9 +122,11 @@ function broadcastChannelCallCount() {
 let messagesCollection = null;
 let dmCollection = null;
 let usersCollection = null;
+let groupsCollection = null;
+let groupMessagesCollection = null;
 
 // In-memory fallback для аккаунтов, если Mongo не подключена (данные теряются при рестарте)
-const memoryUsers = new Map(); // username -> { username, passwordHash }
+const memoryUsers = new Map(); // username -> { username, passwordHash, recoveryCodeHash }
 
 async function initDb() {
   if (!process.env.MONGODB_URI) {
@@ -124,6 +139,8 @@ async function initDb() {
   messagesCollection = db.collection("messages");
   dmCollection = db.collection("dms");
   usersCollection = db.collection("users");
+  groupsCollection = db.collection("groups");
+  groupMessagesCollection = db.collection("groupMessages");
   await usersCollection.createIndex({ username: 1 }, { unique: true });
   console.log("Подключено к базе данных — история и аккаунты будут сохраняться");
 
@@ -136,6 +153,15 @@ async function initDb() {
     if (!dmConversations.has(key)) dmConversations.set(key, []);
     dmConversations.get(key).push(m);
   });
+
+  const savedGroups = await groupsCollection.find({}).toArray();
+  savedGroups.forEach((g) => groups.set(g.id, g));
+
+  const savedGroupMessages = await groupMessagesCollection.find({}).sort({ time: 1 }).toArray();
+  savedGroupMessages.forEach((m) => {
+    if (!groupMessages.has(m.groupId)) groupMessages.set(m.groupId, []);
+    groupMessages.get(m.groupId).push(m);
+  });
 }
 
 // --- Хелперы для аккаунтов ---
@@ -144,8 +170,8 @@ async function findUser(username) {
   return memoryUsers.get(username) || null;
 }
 
-async function createUser(username, passwordHash) {
-  const user = { username, passwordHash, createdAt: new Date().toISOString() };
+async function createUser(username, passwordHash, recoveryCodeHash) {
+  const user = { username, passwordHash, recoveryCodeHash, createdAt: new Date().toISOString() };
   if (usersCollection) {
     await usersCollection.insertOne(user);
   } else {
@@ -154,8 +180,25 @@ async function createUser(username, passwordHash) {
   return user;
 }
 
+async function updateUserPassword(username, passwordHash) {
+  if (usersCollection) {
+    await usersCollection.updateOne({ username }, { $set: { passwordHash } });
+  } else {
+    const u = memoryUsers.get(username);
+    if (u) u.passwordHash = passwordHash;
+  }
+}
+
 function makeToken(username) {
   return jwt.sign({ username }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+}
+
+// Генерирует человекочитаемый код восстановления вида XXXX-XXXX-XXXX
+function generateRecoveryCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // без похожих символов (0/O, 1/I)
+  const part = () =>
+    Array.from({ length: 4 }, () => chars[crypto.randomInt(chars.length)]).join("");
+  return `${part()}-${part()}-${part()}`;
 }
 
 // --- REST: регистрация и вход ---
@@ -176,9 +219,13 @@ app.post("/api/register", async (req, res) => {
       return res.status(409).json({ error: "Такое имя пользователя уже занято" });
     }
     const passwordHash = await bcrypt.hash(password, 10);
-    await createUser(username, passwordHash);
+    const recoveryCode = generateRecoveryCode();
+    const recoveryCodeHash = await bcrypt.hash(recoveryCode, 10);
+    await createUser(username, passwordHash, recoveryCodeHash);
     const token = makeToken(username);
-    res.json({ token, username });
+    // Код восстановления возвращается только один раз, при регистрации —
+    // сервер хранит лишь его хэш и не сможет показать его снова.
+    res.json({ token, username, recoveryCode });
   } catch (err) {
     console.error("Ошибка регистрации:", err);
     res.status(500).json({ error: "Внутренняя ошибка сервера" });
@@ -207,6 +254,47 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
+// --- REST: восстановление пароля по коду восстановления ---
+// Примечание: в прототипе нет почтового сервиса, поэтому восстановление
+// работает через одноразовый код, который выдаётся один раз при регистрации.
+// Пользователь должен сохранить его сам. Для продакшена стоит заменить
+// на отправку кода по email через сервис вроде SendGrid/Resend.
+app.post("/api/forgot-password", async (req, res) => {
+  try {
+    const { username, recoveryCode, newPassword } = req.body || {};
+    if (!username || !recoveryCode || !newPassword) {
+      return res.status(400).json({ error: "Заполните все поля" });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: "Пароль должен быть не короче 6 символов" });
+    }
+    const user = await findUser(username);
+    if (!user || !user.recoveryCodeHash) {
+      return res.status(400).json({ error: "Неверный код восстановления" });
+    }
+    const ok = await bcrypt.compare(recoveryCode.trim().toUpperCase(), user.recoveryCodeHash);
+    if (!ok) {
+      return res.status(400).json({ error: "Неверный код восстановления" });
+    }
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await updateUserPassword(username, passwordHash);
+    const token = makeToken(username);
+    res.json({ token, username });
+  } catch (err) {
+    console.error("Ошибка восстановления пароля:", err);
+    res.status(500).json({ error: "Внутренняя ошибка сервера" });
+  }
+});
+
+// --- Группы: REST для списка (создание/удаление идут через сокеты, т.к. требуют realtime-уведомлений) ---
+function groupsForUser(username) {
+  return Array.from(groups.values()).filter((g) => g.members.includes(username));
+}
+
+function sanitizeGroup(g) {
+  return { id: g.id, name: g.name, owner: g.owner, members: g.members, createdAt: g.createdAt };
+}
+
 // --- Socket.io: авторизация по токену ---
 io.use((socket, next) => {
   const token = socket.handshake.auth && socket.handshake.auth.token;
@@ -222,6 +310,18 @@ io.use((socket, next) => {
   }
 });
 
+function groupRoom(groupId) {
+  return "group:" + groupId;
+}
+
+function findMessageById(list, id) {
+  return list.find((m) => m.id === id);
+}
+
+function canModify(message, username) {
+  return message && message.author === username && !message.deleted;
+}
+
 io.on("connection", (socket) => {
   console.log("Новое подключение:", socket.id, "как", socket.username);
 
@@ -230,8 +330,12 @@ io.on("connection", (socket) => {
     onlineUsers.set(socket.id, { username, avatar: avatar || null });
     socket.join(CHANNEL);
 
+    // Присоединяем к комнатам всех групп, в которых пользователь состоит
+    groupsForUser(username).forEach((g) => socket.join(groupRoom(g.id)));
+
     socket.emit("messages:history", messages);
     socket.emit("call:room:count", channelCallParticipants.size);
+    socket.emit("group:list", groupsForUser(username).map(sanitizeGroup));
     broadcastUserList();
 
     io.to(CHANNEL).emit("system:message", `${username} присоединился(-ась) к чату`);
@@ -244,7 +348,47 @@ io.on("connection", (socket) => {
     broadcastUserList();
   });
 
-  socket.on("message:send", ({ text, attachment } = {}) => {
+  // --- Печатает... (индикатор набора текста) ---
+  socket.on("typing:start", ({ scope, target } = {}) => {
+    if (!socket.username) return;
+    if (scope === "channel") {
+      typingChannel.add(socket.username);
+      socket.to(CHANNEL).emit("typing:update", { scope, username: socket.username, typing: true });
+    } else if (scope === "dm" && target) {
+      const key = dmKey(socket.username, target);
+      if (!typingDm.has(key)) typingDm.set(key, new Set());
+      typingDm.get(key).add(socket.username);
+      const targetSocketId = findSocketByUsername(target);
+      if (targetSocketId) {
+        io.to(targetSocketId).emit("typing:update", { scope, username: socket.username, typing: true });
+      }
+    } else if (scope === "group" && target && groups.has(target)) {
+      if (!typingGroup.has(target)) typingGroup.set(target, new Set());
+      typingGroup.get(target).add(socket.username);
+      socket.to(groupRoom(target)).emit("typing:update", { scope, target, username: socket.username, typing: true });
+    }
+  });
+
+  socket.on("typing:stop", ({ scope, target } = {}) => {
+    if (!socket.username) return;
+    if (scope === "channel") {
+      typingChannel.delete(socket.username);
+      socket.to(CHANNEL).emit("typing:update", { scope, username: socket.username, typing: false });
+    } else if (scope === "dm" && target) {
+      const key = dmKey(socket.username, target);
+      if (typingDm.has(key)) typingDm.get(key).delete(socket.username);
+      const targetSocketId = findSocketByUsername(target);
+      if (targetSocketId) {
+        io.to(targetSocketId).emit("typing:update", { scope, username: socket.username, typing: false });
+      }
+    } else if (scope === "group" && target) {
+      if (typingGroup.has(target)) typingGroup.get(target).delete(socket.username);
+      socket.to(groupRoom(target)).emit("typing:update", { scope, target, username: socket.username, typing: false });
+    }
+  });
+
+  // --- Сообщения в #general ---
+  socket.on("message:send", ({ text, attachment, replyTo } = {}) => {
     const author = socket.username || "Аноним";
     if (!text && !attachment) return;
     const message = {
@@ -253,12 +397,48 @@ io.on("connection", (socket) => {
       text: text || "",
       attachment: attachment || null,
       time: new Date().toISOString(),
+      replyTo: replyTo && replyTo.id ? { id: replyTo.id, author: replyTo.author, text: (replyTo.text || "").slice(0, 200) } : null,
+      reactions: {},
+      edited: false,
+      deleted: false,
     };
     messages.push(message);
     io.to(CHANNEL).emit("message:new", message);
     if (messagesCollection) messagesCollection.insertOne(message).catch(console.error);
   });
 
+  socket.on("message:edit", ({ id, text } = {}) => {
+    const message = findMessageById(messages, id);
+    if (!canModify(message, socket.username) || !text) return;
+    message.text = text;
+    message.edited = true;
+    io.to(CHANNEL).emit("message:updated", message);
+    if (messagesCollection) messagesCollection.updateOne({ id }, { $set: { text, edited: true } }).catch(console.error);
+  });
+
+  socket.on("message:delete", ({ id } = {}) => {
+    const message = findMessageById(messages, id);
+    if (!canModify(message, socket.username)) return;
+    message.deleted = true;
+    message.text = "";
+    message.attachment = null;
+    io.to(CHANNEL).emit("message:updated", message);
+    if (messagesCollection) messagesCollection.updateOne({ id }, { $set: { deleted: true, text: "", attachment: null } }).catch(console.error);
+  });
+
+  socket.on("message:react", ({ id, emoji } = {}) => {
+    const message = findMessageById(messages, id);
+    if (!message || !emoji || !socket.username) return;
+    if (!message.reactions[emoji]) message.reactions[emoji] = [];
+    const idx = message.reactions[emoji].indexOf(socket.username);
+    if (idx === -1) message.reactions[emoji].push(socket.username);
+    else message.reactions[emoji].splice(idx, 1);
+    if (message.reactions[emoji].length === 0) delete message.reactions[emoji];
+    io.to(CHANNEL).emit("message:updated", message);
+    if (messagesCollection) messagesCollection.updateOne({ id }, { $set: { reactions: message.reactions } }).catch(console.error);
+  });
+
+  // --- Личные сообщения ---
   socket.on("dm:history:request", (otherUsername) => {
     if (!socket.username) return;
     const key = dmKey(socket.username, otherUsername);
@@ -280,7 +460,7 @@ io.on("connection", (socket) => {
     });
   });
 
-  socket.on("dm:send", ({ to, text, attachment }) => {
+  socket.on("dm:send", ({ to, text, attachment, replyTo }) => {
     const from = socket.username;
     if (!from || (!text && !attachment)) return;
 
@@ -291,6 +471,10 @@ io.on("connection", (socket) => {
       text: text || "",
       attachment: attachment || null,
       time: new Date().toISOString(),
+      replyTo: replyTo && replyTo.id ? { id: replyTo.id, author: replyTo.author, text: (replyTo.text || "").slice(0, 200) } : null,
+      reactions: {},
+      edited: false,
+      deleted: false,
     };
 
     const key = dmKey(from, to);
@@ -304,6 +488,156 @@ io.on("connection", (socket) => {
     if (targetSocketId && targetSocketId !== socket.id) {
       io.to(targetSocketId).emit("dm:new", message);
     }
+  });
+
+  function dmMessageAndPeer(id, peer) {
+    if (!socket.username) return null;
+    const key = dmKey(socket.username, peer);
+    const list = dmConversations.get(key) || [];
+    const msg = list.find((m) => m.id === id);
+    return msg;
+  }
+
+  socket.on("dm:edit", ({ id, to, text } = {}) => {
+    const message = dmMessageAndPeer(id, to);
+    if (!message || message.from !== socket.username || !text) return;
+    message.text = text;
+    message.edited = true;
+    emitDmUpdate(message, to);
+  });
+
+  socket.on("dm:delete", ({ id, to } = {}) => {
+    const message = dmMessageAndPeer(id, to);
+    if (!message || message.from !== socket.username) return;
+    message.deleted = true;
+    message.text = "";
+    message.attachment = null;
+    emitDmUpdate(message, to);
+  });
+
+  socket.on("dm:react", ({ id, to, emoji } = {}) => {
+    const message = dmMessageAndPeer(id, to);
+    if (!message || !emoji || !socket.username) return;
+    if (!message.reactions) message.reactions = {};
+    if (!message.reactions[emoji]) message.reactions[emoji] = [];
+    const idx = message.reactions[emoji].indexOf(socket.username);
+    if (idx === -1) message.reactions[emoji].push(socket.username);
+    else message.reactions[emoji].splice(idx, 1);
+    if (message.reactions[emoji].length === 0) delete message.reactions[emoji];
+    emitDmUpdate(message, to);
+  });
+
+  function emitDmUpdate(message, peer) {
+    socket.emit("dm:updated", message);
+    const targetSocketId = findSocketByUsername(peer);
+    if (targetSocketId && targetSocketId !== socket.id) {
+      io.to(targetSocketId).emit("dm:updated", message);
+    }
+    if (dmCollection) {
+      dmCollection
+        .updateOne({ id: message.id }, { $set: { text: message.text, edited: !!message.edited, deleted: !!message.deleted, attachment: message.attachment, reactions: message.reactions } })
+        .catch(console.error);
+    }
+  }
+
+  // --- Группы ---
+  socket.on("group:create", ({ name, members } = {}) => {
+    const owner = socket.username;
+    if (!owner || !name || !name.trim()) return;
+    const cleanMembers = Array.from(new Set([owner, ...((members || []).filter((m) => typeof m === "string"))]));
+    const group = {
+      id: crypto.randomBytes(8).toString("hex"),
+      name: name.trim().slice(0, 40),
+      owner,
+      members: cleanMembers,
+      createdAt: new Date().toISOString(),
+    };
+    groups.set(group.id, group);
+    groupMessages.set(group.id, []);
+    if (groupsCollection) groupsCollection.insertOne(group).catch(console.error);
+
+    const sanitized = sanitizeGroup(group);
+    const memberSocketIds = findSocketsByUsernames(cleanMembers);
+    memberSocketIds.forEach((sid) => {
+      const s = io.sockets.sockets.get(sid);
+      if (s) s.join(groupRoom(group.id));
+    });
+    io.to(groupRoom(group.id)).emit("group:created", sanitized);
+  });
+
+  socket.on("group:remove", ({ groupId } = {}) => {
+    const group = groups.get(groupId);
+    if (!group || group.owner !== socket.username) return;
+    groups.delete(groupId);
+    groupMessages.delete(groupId);
+    if (groupsCollection) groupsCollection.deleteOne({ id: groupId }).catch(console.error);
+    if (groupMessagesCollection) groupMessagesCollection.deleteMany({ groupId }).catch(console.error);
+    io.to(groupRoom(groupId)).emit("group:removed", { groupId });
+    io.in(groupRoom(groupId)).socketsLeave(groupRoom(groupId));
+  });
+
+  socket.on("group:history:request", (groupId) => {
+    const group = groups.get(groupId);
+    if (!group || !socket.username || !group.members.includes(socket.username)) return;
+    socket.emit("group:history", { groupId, messages: groupMessages.get(groupId) || [] });
+  });
+
+  socket.on("group:send", ({ groupId, text, attachment, replyTo } = {}) => {
+    const author = socket.username;
+    const group = groups.get(groupId);
+    if (!author || !group || !group.members.includes(author)) return;
+    if (!text && !attachment) return;
+    const message = {
+      id: Date.now() + "-" + Math.random().toString(36).slice(2, 8),
+      groupId,
+      author,
+      text: text || "",
+      attachment: attachment || null,
+      time: new Date().toISOString(),
+      replyTo: replyTo && replyTo.id ? { id: replyTo.id, author: replyTo.author, text: (replyTo.text || "").slice(0, 200) } : null,
+      reactions: {},
+      edited: false,
+      deleted: false,
+    };
+    if (!groupMessages.has(groupId)) groupMessages.set(groupId, []);
+    groupMessages.get(groupId).push(message);
+    io.to(groupRoom(groupId)).emit("group:message:new", message);
+    if (groupMessagesCollection) groupMessagesCollection.insertOne(message).catch(console.error);
+  });
+
+  socket.on("group:message:edit", ({ groupId, id, text } = {}) => {
+    const list = groupMessages.get(groupId) || [];
+    const message = findMessageById(list, id);
+    if (!canModify(message, socket.username) || !text) return;
+    message.text = text;
+    message.edited = true;
+    io.to(groupRoom(groupId)).emit("group:message:updated", message);
+    if (groupMessagesCollection) groupMessagesCollection.updateOne({ id }, { $set: { text, edited: true } }).catch(console.error);
+  });
+
+  socket.on("group:message:delete", ({ groupId, id } = {}) => {
+    const list = groupMessages.get(groupId) || [];
+    const message = findMessageById(list, id);
+    if (!canModify(message, socket.username)) return;
+    message.deleted = true;
+    message.text = "";
+    message.attachment = null;
+    io.to(groupRoom(groupId)).emit("group:message:updated", message);
+    if (groupMessagesCollection) groupMessagesCollection.updateOne({ id }, { $set: { deleted: true, text: "", attachment: null } }).catch(console.error);
+  });
+
+  socket.on("group:message:react", ({ groupId, id, emoji } = {}) => {
+    const list = groupMessages.get(groupId) || [];
+    const message = findMessageById(list, id);
+    if (!message || !emoji || !socket.username) return;
+    if (!message.reactions) message.reactions = {};
+    if (!message.reactions[emoji]) message.reactions[emoji] = [];
+    const idx = message.reactions[emoji].indexOf(socket.username);
+    if (idx === -1) message.reactions[emoji].push(socket.username);
+    else message.reactions[emoji].splice(idx, 1);
+    if (message.reactions[emoji].length === 0) delete message.reactions[emoji];
+    io.to(groupRoom(groupId)).emit("group:message:updated", message);
+    if (groupMessagesCollection) groupMessagesCollection.updateOne({ id }, { $set: { reactions: message.reactions } }).catch(console.error);
   });
 
   // --- Звонки в личные сообщения: приглашение / ответ / завершение ---
@@ -372,6 +706,9 @@ io.on("connection", (socket) => {
     }
 
     if (user) {
+      typingChannel.delete(user.username);
+      typingDm.forEach((set) => set.delete(user.username));
+      typingGroup.forEach((set) => set.delete(user.username));
       lastSeen.set(user.username, new Date().toISOString());
       broadcastUserList();
       io.to(CHANNEL).emit("system:message", `${user.username} вышел(-ла) из чата`);
