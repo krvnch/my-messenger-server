@@ -1,17 +1,17 @@
  :root {
-  --bg-main: #09111d;
-  --bg-panel: rgba(15, 23, 36, 0.7);
-  --bg-panel-strong: rgba(18, 25, 38, 0.9);
-  --bg-sidebar: rgba(13, 18, 28, 0.72);
-  --bg-elevated: rgba(25, 35, 48, 0.8);
-  --bg-input: rgba(255, 255, 255, 0.06);
-  --accent: #7c6ff0;
-  --accent-soft: rgba(124, 111, 240, 0.18);
-  --accent-2: #76d7ff;
-  --text-main: #edf2ff;
-  --text-muted: #9aa8bd;
-  --border: rgba(255, 255, 255, 0.13);
-  --shadow: 0 30px 80px rgba(4, 7, 15, 0.7);
+  --bg-main: #04070d;
+  --bg-panel: rgba(18, 24, 34, 0.68);
+  --bg-panel-strong: rgba(11, 15, 22, 0.82);
+  --bg-sidebar: rgba(12, 16, 24, 0.8);
+  --bg-elevated: rgba(25, 34, 48, 0.8);
+  --bg-input: rgba(255, 255, 255, 0.05);
+  --accent: #7d6af7;
+  --accent-soft: rgba(125, 106, 247, 0.2);
+  --accent-2: #78d8ff;
+  --text-main: #edf4ff;
+  --text-muted: #9aa9c2;
+  --border: rgba(255, 255, 255, 0.1);
+  --shadow: 0 30px 90px rgba(2, 6, 12, 0.82);
   --radius: 18px;
 }
 
@@ -21,13 +21,14 @@ html, body {
   margin: 0;
   height: 100%;
   background:
-    radial-gradient(circle at top left, rgba(124, 111, 240, 0.26), transparent 26%),
-    radial-gradient(circle at bottom right, rgba(76, 217, 255, 0.18), transparent 32%),
-    #070b12;
+    radial-gradient(circle at 12% 12%, rgba(125, 106, 247, 0.22), transparent 24%),
+    radial-gradient(circle at 82% 88%, rgba(120, 216, 255, 0.15), transparent 26%),
+    radial-gradient(circle at 50% 100%, rgba(94, 130, 255, 0.12), transparent 25%),
+    #03070d;
   color: var(--text-main);
   font-family: "Inter", -apple-system, sans-serif;
   overflow: hidden;
-}
+ }
 
 .hidden { display: none !important; }
 
@@ -41,24 +42,25 @@ button, input, select { font: inherit; }
   align-items: center;
   justify-content: center;
   background:
-    radial-gradient(circle at 20% 20%, rgba(124, 111, 240, 0.28), transparent 32%),
-    radial-gradient(circle at 80% 80%, rgba(118, 215, 255, 0.2), transparent 36%),
-    #070b12;
+    radial-gradient(circle at 20% 20%, rgba(125, 106, 247, 0.22), transparent 30%),
+    radial-gradient(circle at 80% 80%, rgba(120, 216, 255, 0.12), transparent 32%),
+    radial-gradient(circle at 50% 100%, rgba(59, 74, 104, 0.25), transparent 30%),
+    #04080d;
   padding: 24px;
 }
 
 .connect-card {
   width: 360px;
-  background: rgba(17, 24, 36, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 28px;
+  background: linear-gradient(180deg, rgba(17, 24, 36, 0.82), rgba(9, 13, 20, 0.72));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 30px;
   padding: 28px 24px;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
+  box-shadow: 0 30px 100px rgba(3, 8, 15, 0.9), inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -12px 28px rgba(255,255,255,0.02);
+  backdrop-filter: blur(26px);
+  -webkit-backdrop-filter: blur(26px);
 }
 
 .logo {
@@ -124,20 +126,24 @@ button, input, select { font: inherit; }
 
 .primary-btn {
   margin-top: 20px;
-  background: linear-gradient(135deg, rgba(124, 111, 240, 1), rgba(118, 215, 255, 1));
+  background: linear-gradient(135deg, rgba(125, 106, 247, 1), rgba(120, 216, 255, 0.92));
   color: #08131d;
   border: none;
-  border-radius: 12px;
+  border-radius: 14px;
   padding: 11px 14px;
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
-  transition: transform 0.15s ease, filter 0.15s ease;
-  box-shadow: 0 16px 36px rgba(124, 111, 240, 0.24);
+  transition: transform 0.18s ease, filter 0.18s ease, box-shadow 0.18s ease;
+  box-shadow: 0 18px 42px rgba(125, 106, 247, 0.32);
 }
 
-.primary-btn:hover { filter: brightness(1.05); transform: translateY(-1px); }
-.primary-btn:active { filter: brightness(0.96); }
+.primary-btn:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px) scale(1.01);
+  box-shadow: 0 22px 48px rgba(125, 106, 247, 0.38);
+}
+.primary-btn:active { filter: brightness(0.97); }
 
 .primary-btn.secondary {
   background: rgba(255, 255, 255, 0.05);
@@ -178,7 +184,7 @@ button, input, select { font: inherit; }
 .app {
   display: flex;
   height: 100vh;
-  padding: 24px;
+  padding: 18px 20px 20px;
 }
 
 .app-shell {
@@ -197,11 +203,11 @@ button, input, select { font: inherit; }
   gap: 16px;
   padding: 18px 20px;
   border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 24px;
-  background: rgba(12, 17, 26, 0.54);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
-  box-shadow: 0 10px 40px rgba(7, 11, 18, 0.4);
+  border-radius: 26px;
+  background: linear-gradient(180deg, rgba(16, 22, 31, 0.72), rgba(11, 16, 23, 0.68));
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  box-shadow: 0 18px 60px rgba(3, 7, 12, 0.6), inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -16px 28px rgba(255,255,255,0.015);
 }
 
 .brand-wrap {
@@ -232,14 +238,21 @@ button, input, select { font: inherit; }
 }
 
 .pill-btn {
-  border: 1px solid rgba(255,255,255,0.07);
-  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
   color: var(--text-main);
   border-radius: 999px;
   padding: 10px 16px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+.pill-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(124,111,240,0.7);
+  box-shadow: 0 10px 24px rgba(125,106,247,0.1), inset 0 1px 0 rgba(255,255,255,0.06);
 }
 
 .pill-btn.primary {
@@ -249,8 +262,30 @@ button, input, select { font: inherit; }
   box-shadow: 0 12px 30px rgba(124, 111, 240, 0.25);
 }
 
+.pill-btn.secondary,
+.pill-btn.ghost {
+  background: rgba(255,255,255,0.03);
+  border-color: rgba(255,255,255,0.08);
+}
+
 .pill-btn.secondary:hover,
 .pill-btn.ghost:hover { border-color: rgba(124,111,240,0.7); }
+
+.primary-btn {
+  background: linear-gradient(135deg, rgba(124,111,240,1), rgba(118,215,255,1));
+  border: none;
+  color: #06131b;
+  border-radius: 14px;
+  padding: 12px 18px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 12px 30px rgba(124, 111, 240, 0.25);
+}
+
+.primary-btn.small {
+  padding: 9px 14px;
+  font-size: 13px;
+}
 
 .mini-badge {
   display: inline-flex;
@@ -269,9 +304,9 @@ button, input, select { font: inherit; }
 
 .glass-panel {
   border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(9, 15, 23, 0.65);
+  background: linear-gradient(180deg, rgba(12, 18, 28, 0.82), rgba(7, 12, 18, 0.75));
   border-radius: 30px;
-  box-shadow: var(--shadow);
+  box-shadow: 0 24px 80px rgba(3, 7, 12, 0.72), inset 0 1px 0 rgba(255,255,255,0.1), inset 0 -18px 30px rgba(255,255,255,0.015);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
 }
@@ -283,6 +318,9 @@ button, input, select { font: inherit; }
   min-width: 0;
   overflow: hidden;
   min-height: 420px;
+  background: linear-gradient(180deg, rgba(11, 16, 25, 0.84), rgba(7, 12, 18, 0.9));
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 32px;
 }
 
 .chat-header {
@@ -322,7 +360,17 @@ button, input, select { font: inherit; }
 }
 
 .sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 10, 17, 0.38);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
   display: none;
+  z-index: 28;
+}
+
+.sidebar-overlay.open {
+  display: block;
 }
 
 .messages {
@@ -332,6 +380,7 @@ button, input, select { font: inherit; }
   display: flex;
   flex-direction: column;
   gap: 12px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.015), rgba(255,255,255,0.0));
 }
 
 .messages::-webkit-scrollbar { width: 8px; }
@@ -512,10 +561,30 @@ button, input, select { font: inherit; }
   border-radius: 12px;
   cursor: pointer;
   color: var(--text-main);
+  transition: all 0.18s ease;
 }
 
 .online-list li:hover { background: rgba(255,255,255,0.04); }
 .online-list li.active-dm { background: rgba(124,111,240,0.12); }
+
+.call-trigger-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.05);
+  color: var(--text-main);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.call-trigger-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(124,111,240,0.7);
+}
 
 .online-list li.self { opacity: 0.72; cursor: default; }
 
