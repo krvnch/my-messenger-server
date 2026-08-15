@@ -495,6 +495,14 @@ function addMessage(msg, authorField) {
       audioEl.preload = "metadata";
       voiceEl.appendChild(icon);
       voiceEl.appendChild(audioEl);
+      if (attachment.duration) {
+        const durEl = document.createElement("span");
+        durEl.className = "voice-duration";
+        const m = Math.floor(attachment.duration / 60);
+        const s = attachment.duration % 60;
+        durEl.textContent = `${m}:${String(s).padStart(2, "0")}`;
+        voiceEl.appendChild(durEl);
+      }
       row.appendChild(voiceEl);
     } else {
       const link = document.createElement("a");
@@ -1754,10 +1762,11 @@ function stopRecording(shouldSend) {
         recordedChunks = [];
         return;
       }
+      const durationSeconds = Math.round((Date.now() - recordingStartTime) / 1000);
       const blob = new Blob(recordedChunks, { type: mimeTypeUsed });
       recordedChunks = [];
       if (blob.size < 500) return; // слишком короткая запись, скорее всего случайный тап
-      await uploadAndSendVoice(blob, mimeTypeUsed);
+      await uploadAndSendVoice(blob, mimeTypeUsed, durationSeconds);
     },
     { once: true }
   );
@@ -1765,7 +1774,7 @@ function stopRecording(shouldSend) {
   recorderRef.stop();
 }
 
-async function uploadAndSendVoice(blob, mimeType) {
+async function uploadAndSendVoice(blob, mimeType, durationSeconds) {
   const ext = mimeType.includes("mp4") ? "m4a" : mimeType.includes("ogg") ? "ogg" : "webm";
   const file = new File([blob], `voice-message.${ext}`, { type: mimeType });
 
@@ -1783,6 +1792,7 @@ async function uploadAndSendVoice(blob, mimeType) {
       addSystemMessage(data.error || "Не удалось отправить голосовое сообщение");
       return;
     }
+    data.duration = durationSeconds; // сервер не считает длительность сам — прикладываем то, что засекли на клиенте
 
     const replyTo = pendingReply ? { id: pendingReply.id, author: pendingReply.author, text: pendingReply.text } : null;
 
