@@ -3,6 +3,8 @@ let myName = "";
 let myAvatar = localStorage.getItem("myAvatar") || null;
 let myStatus = localStorage.getItem("myStatus") || "online"; // "online" | "away" | "dnd"
 let onlineUsersList = []; // [{ username, avatar, status }]
+let authMode = "login"; // "login" | "register" | "forgot"
+let pendingTempToken = null; // хранит tempToken между шагом пароля и шагом 2FA при входе
 
 // Непрочитанные сообщения: channel — число, dm/group — Map(key -> {count, mention})
 let unreadChannel = 0;
@@ -44,9 +46,12 @@ const AVATAR_EMOJIS = ["😀", "😎", "🤖", "🐱", "🐶", "🦊", "🐼", "
 const connectScreen = document.getElementById("connect-screen");
 const app = document.getElementById("app");
 const usernameInput = document.getElementById("username-input");
+const passwordInput = document.getElementById("password-input");
 const connectBtn = document.getElementById("connect-btn");
 const connectError = document.getElementById("connect-error");
 const connectSubtitle = document.getElementById("connect-subtitle");
+const authSwitchText = document.getElementById("auth-switch-text");
+const authSwitchLink = document.getElementById("auth-switch-link");
 
 const messagesEl = document.getElementById("messages");
 const messageForm = document.getElementById("message-form");
@@ -72,16 +77,7 @@ const sidebarToggle = document.getElementById("sidebar-toggle");
 const sidebarOverlay = document.getElementById("sidebar-overlay");
 
 const dmCallBtn = document.getElementById("dm-call-btn");
-const headerCallBtn = document.getElementById("header-call-btn");
-const headerCallIcon = document.getElementById("header-call-icon");
-const headerCallText = document.getElementById("header-call-text");
-const welcomePanel = document.getElementById("welcome-panel");
-const welcomeUsernameEl = document.getElementById("welcome-username");
-const welcomeCallBtn = document.getElementById("welcome-call-btn");
-const welcomeCallIcon = document.getElementById("welcome-call-icon");
-const welcomeCallLabel = document.getElementById("welcome-call-label");
-const welcomeCallSub = document.getElementById("welcome-call-sub");
-const welcomeChatBtn = document.getElementById("welcome-chat-btn");
+const channelCallBtn = document.getElementById("channel-call-btn");
 const callBar = document.getElementById("call-bar");
 const callBarTitle = document.getElementById("call-bar-title");
 const callBarParticipants = document.getElementById("call-bar-participants");
@@ -94,10 +90,6 @@ const incomingCallAvatar = document.getElementById("incoming-call-avatar");
 const acceptCallBtn = document.getElementById("accept-call-btn");
 const declineCallBtn = document.getElementById("decline-call-btn");
 const remoteAudioContainer = document.getElementById("remote-audio-container");
-const screenShareViewer = document.getElementById("screen-share-viewer");
-const screenShareVideo = document.getElementById("screen-share-video");
-const screenShareLabel = document.getElementById("screen-share-label");
-const screenShareCloseBtn = document.getElementById("screen-share-close-btn");
 
 const profileTrigger = document.getElementById("profile-trigger");
 const profilePopover = document.getElementById("profile-popover");
@@ -107,7 +99,26 @@ const logoutBtn = document.getElementById("logout-btn");
 
 const themeToggleBtn = document.getElementById("theme-toggle-btn");
 const soundToggleBtn = document.getElementById("sound-toggle-btn");
+const audioSettingsBtn = document.getElementById("audio-settings-btn");
+const audioSettingsModal = document.getElementById("audio-settings-modal");
+const audioSettingsCloseBtn = document.getElementById("audio-settings-close-btn");
+const micSelect = document.getElementById("mic-select");
+const speakerSelect = document.getElementById("speaker-select");
+const audioQualityHint = document.getElementById("audio-quality-hint");
+const micTestBtn = document.getElementById("mic-test-btn");
+const micLevelFill = document.getElementById("mic-level-fill");
 const typingIndicatorEl = document.getElementById("typing-indicator");
+
+const passwordFieldGroup = document.getElementById("password-field-group");
+const recoveryFieldGroup = document.getElementById("recovery-field-group");
+const recoveryCodeInput = document.getElementById("recovery-code-input");
+const newPasswordInput = document.getElementById("new-password-input");
+const forgotPasswordLink = document.getElementById("forgot-password-link");
+const recoveryCodeModal = document.getElementById("recovery-code-modal");
+const recoveryCodeDisplay = document.getElementById("recovery-code-display");
+const recoveryCodeOkBtn = document.getElementById("recovery-code-ok-btn");
+const twofaFieldGroup = document.getElementById("twofa-field-group");
+const twofaCodeInput = document.getElementById("twofa-code-input");
 
 const replyPreview = document.getElementById("reply-preview");
 const replyPreviewText = document.getElementById("reply-preview-text");
@@ -139,6 +150,24 @@ const channelUnreadBadge = document.getElementById("channel-unread-badge");
 const notifToggleBtn = document.getElementById("notif-toggle-btn");
 const meStatusDot = document.getElementById("me-status-dot");
 const statusPicker = document.getElementById("status-picker");
+
+const openSecurityBtn = document.getElementById("open-security-btn");
+const securityModal = document.getElementById("security-modal");
+const securityCloseBtn = document.getElementById("security-close-btn");
+const currentPasswordInput = document.getElementById("current-password-input");
+const changePasswordInput = document.getElementById("change-password-input");
+const changePasswordBtn = document.getElementById("change-password-btn");
+const securityError = document.getElementById("security-error");
+const twofaDisabledBlock = document.getElementById("twofa-disabled-block");
+const twofaSetupBlock = document.getElementById("twofa-setup-block");
+const twofaEnabledBlock = document.getElementById("twofa-enabled-block");
+const twofaSetupBtn = document.getElementById("twofa-setup-btn");
+const twofaQrImg = document.getElementById("twofa-qr-img");
+const twofaSecretText = document.getElementById("twofa-secret-text");
+const twofaConfirmInput = document.getElementById("twofa-confirm-input");
+const twofaConfirmBtn = document.getElementById("twofa-confirm-btn");
+const twofaDisablePasswordInput = document.getElementById("twofa-disable-password-input");
+const twofaDisableBtn = document.getElementById("twofa-disable-btn");
 
 let popoverSelectedAvatar = null;
 let popoverSelectedStatus = "online";
@@ -645,74 +674,12 @@ function updateHeaderAndInput() {
   updateChatHeaderStatus();
 }
 
-// ================= Приветственный экран =================
-// После входа пользователь сначала видит две крупные кнопки — "Войти в войс"
-// и "Открыть чат" — а не сразу общий чат. Это даёт выбор, не наваливая всё
-// сразу, и даёт войсу заметное, но не перекрывающее сообщения место.
-let uiMode = "welcome"; // "welcome" | "chat"
-
-function enterChatMode() {
-  if (uiMode === "chat") return;
-  uiMode = "chat";
-  welcomePanel.classList.add("hidden");
-  messagesEl.classList.remove("hidden");
-  messageForm.classList.remove("hidden");
-  headerCallBtn.classList.remove("hidden");
-}
-
-function showWelcome() {
-  uiMode = "welcome";
-  welcomeUsernameEl.textContent = myName;
-  welcomePanel.classList.remove("hidden");
-  messagesEl.classList.add("hidden");
-  messageForm.classList.add("hidden");
-  headerCallBtn.classList.add("hidden");
-  replyPreview.classList.add("hidden");
-  attachmentPreview.classList.add("hidden");
-  voiceRecordingBar.classList.add("hidden");
-  chatHeader.querySelector(".chat-header-title").textContent = "Флоу";
-}
-
-// Синхронизирует вид кнопки звонка сразу в двух местах: на приветственном
-// экране (крупная) и в шапке чата (компактная) — они всегда должны совпадать.
-function updateCallButtonsUI() {
-  const icon = inChannelCall ? "🔴" : "🎤";
-  const label = inChannelCall ? "Покинуть войс" : "Войти в войс";
-  welcomeCallBtn.classList.toggle("in-call", inChannelCall);
-  welcomeCallIcon.textContent = icon;
-  welcomeCallLabel.textContent = label;
-  headerCallBtn.classList.toggle("in-call", inChannelCall);
-  headerCallIcon.textContent = icon;
-  headerCallText.textContent = inChannelCall ? "В войсе" : "Войс";
-}
-
-function setWelcomeCallSub(text) {
-  if (text) {
-    welcomeCallSub.textContent = text;
-    welcomeCallSub.classList.remove("hidden");
-  } else {
-    welcomeCallSub.classList.add("hidden");
-  }
-}
-
-function toggleChannelCall() {
-  if (inChannelCall) leaveChannelCall();
-  else joinChannelCall();
-}
-welcomeCallBtn.addEventListener("click", toggleChannelCall);
-headerCallBtn.addEventListener("click", toggleChannelCall);
-welcomeChatBtn.addEventListener("click", () => {
-  enterChatMode();
-  switchToChannel();
-});
-
 function clearPendingReply() {
   pendingReply = null;
   replyPreview.classList.add("hidden");
 }
 
 function switchToChannel() {
-  enterChatMode();
   currentView = { type: "channel" };
   clearPendingReply();
   markChannelRead();
@@ -725,7 +692,6 @@ function switchToChannel() {
 }
 
 function switchToDm(username) {
-  enterChatMode();
   currentView = { type: "dm", withUser: username };
   clearPendingReply();
   markDmRead(username);
@@ -746,7 +712,6 @@ function switchToDm(username) {
 function switchToGroup(groupId) {
   const group = groupsList.find((g) => g.id === groupId);
   if (!group) return;
-  enterChatMode();
   currentView = { type: "group", groupId, name: group.name };
   clearPendingReply();
   markGroupRead(groupId);
@@ -1117,27 +1082,276 @@ logoutBtn.addEventListener("click", () => {
   window.location.reload();
 });
 
+openSecurityBtn.addEventListener("click", () => {
+  closeProfilePopover();
+  openSecurityModal();
+});
+
+// ================= Пароль и безопасность =================
 function authHeader() {
   return { Authorization: "Bearer " + localStorage.getItem("token") };
 }
 
-// --- Вход по нику, без пароля ---
+async function openSecurityModal() {
+  securityError.textContent = "";
+  currentPasswordInput.value = "";
+  changePasswordInput.value = "";
+  twofaSetupBlock.classList.add("hidden");
+  securityModal.classList.remove("hidden");
+  try {
+    const res = await fetch("/api/2fa/status", { headers: authHeader() });
+    const data = await res.json();
+    if (data.enabled) {
+      twofaDisabledBlock.classList.add("hidden");
+      twofaEnabledBlock.classList.remove("hidden");
+    } else {
+      twofaDisabledBlock.classList.remove("hidden");
+      twofaEnabledBlock.classList.add("hidden");
+    }
+  } catch (e) {
+    // не удалось получить статус 2FA — просто оставим блок скрытым
+  }
+}
+
+securityCloseBtn.addEventListener("click", () => securityModal.classList.add("hidden"));
+
+changePasswordBtn.addEventListener("click", async () => {
+  const currentPassword = currentPasswordInput.value;
+  const newPassword = changePasswordInput.value;
+  if (!currentPassword || !newPassword) {
+    securityError.textContent = "Заполните оба поля пароля";
+    return;
+  }
+  if (newPassword.length < 6) {
+    securityError.textContent = "Новый пароль должен быть не короче 6 символов";
+    return;
+  }
+  securityError.textContent = "Сохранение...";
+  try {
+    const res = await fetch("/api/change-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeader() },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      securityError.textContent = data.error || "Не удалось сменить пароль";
+      return;
+    }
+    securityError.textContent = "Пароль изменён ✓";
+    currentPasswordInput.value = "";
+    changePasswordInput.value = "";
+  } catch (e) {
+    securityError.textContent = "Не удалось связаться с сервером";
+  }
+});
+
+twofaSetupBtn.addEventListener("click", async () => {
+  securityError.textContent = "";
+  try {
+    const res = await fetch("/api/2fa/setup", { method: "POST", headers: authHeader() });
+    const data = await res.json();
+    if (!res.ok) {
+      securityError.textContent = data.error || "Не удалось начать настройку";
+      return;
+    }
+    twofaQrImg.src = data.qrDataUrl;
+    twofaSecretText.textContent = "Секрет (если не получается отсканировать QR): " + data.secret;
+    twofaConfirmInput.value = "";
+    twofaSetupBlock.classList.remove("hidden");
+  } catch (e) {
+    securityError.textContent = "Не удалось связаться с сервером";
+  }
+});
+
+twofaConfirmBtn.addEventListener("click", async () => {
+  const code = twofaConfirmInput.value.trim();
+  if (!code) return;
+  securityError.textContent = "";
+  try {
+    const res = await fetch("/api/2fa/enable", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeader() },
+      body: JSON.stringify({ code }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      securityError.textContent = data.error || "Неверный код";
+      return;
+    }
+    twofaSetupBlock.classList.add("hidden");
+    twofaDisabledBlock.classList.add("hidden");
+    twofaEnabledBlock.classList.remove("hidden");
+  } catch (e) {
+    securityError.textContent = "Не удалось связаться с сервером";
+  }
+});
+
+twofaDisableBtn.addEventListener("click", async () => {
+  const password = twofaDisablePasswordInput.value;
+  if (!password) {
+    securityError.textContent = "Введите пароль для отключения 2FA";
+    return;
+  }
+  securityError.textContent = "";
+  try {
+    const res = await fetch("/api/2fa/disable", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeader() },
+      body: JSON.stringify({ password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      securityError.textContent = data.error || "Не удалось отключить 2FA";
+      return;
+    }
+    twofaDisablePasswordInput.value = "";
+    twofaEnabledBlock.classList.add("hidden");
+    twofaDisabledBlock.classList.remove("hidden");
+  } catch (e) {
+    securityError.textContent = "Не удалось связаться с сервером";
+  }
+});
+
+// --- Аутентификация ---
+
+function setAuthMode(mode) {
+  authMode = mode;
+  connectError.textContent = "";
+  pendingTempToken = null;
+  twofaFieldGroup.classList.add("hidden");
+  usernameInput.disabled = false;
+  if (mode === "login") {
+    connectSubtitle.textContent = "Войдите в свой аккаунт";
+    connectBtn.textContent = "Войти";
+    authSwitchText.textContent = "Нет аккаунта?";
+    authSwitchLink.textContent = "Зарегистрироваться";
+    passwordInput.setAttribute("autocomplete", "current-password");
+    passwordFieldGroup.classList.remove("hidden");
+    recoveryFieldGroup.classList.add("hidden");
+    forgotPasswordLink.parentElement.classList.remove("hidden");
+  } else if (mode === "register") {
+    connectSubtitle.textContent = "Создайте новый аккаунт";
+    connectBtn.textContent = "Зарегистрироваться";
+    authSwitchText.textContent = "Уже есть аккаунт?";
+    authSwitchLink.textContent = "Войти";
+    passwordInput.setAttribute("autocomplete", "new-password");
+    passwordFieldGroup.classList.remove("hidden");
+    recoveryFieldGroup.classList.add("hidden");
+    forgotPasswordLink.parentElement.classList.remove("hidden");
+  } else if (mode === "forgot") {
+    connectSubtitle.textContent = "Восстановление пароля по коду";
+    connectBtn.textContent = "Сбросить пароль";
+    authSwitchText.textContent = "Вспомнили пароль?";
+    authSwitchLink.textContent = "Войти";
+    passwordFieldGroup.classList.add("hidden");
+    recoveryFieldGroup.classList.remove("hidden");
+    forgotPasswordLink.parentElement.classList.add("hidden");
+  } else if (mode === "twofa") {
+    connectSubtitle.textContent = "Введите код из приложения-аутентификатора";
+    connectBtn.textContent = "Подтвердить";
+    authSwitchText.textContent = "";
+    authSwitchLink.textContent = "Назад";
+    passwordFieldGroup.classList.add("hidden");
+    recoveryFieldGroup.classList.add("hidden");
+    twofaFieldGroup.classList.remove("hidden");
+    forgotPasswordLink.parentElement.classList.add("hidden");
+    usernameInput.disabled = true;
+    twofaCodeInput.focus();
+  }
+}
+
+authSwitchLink.addEventListener("click", (e) => {
+  e.preventDefault();
+  if (authMode === "twofa") {
+    setAuthMode("login");
+    return;
+  }
+  setAuthMode(authMode === "login" ? "register" : "login");
+});
+
+forgotPasswordLink.addEventListener("click", (e) => {
+  e.preventDefault();
+  setAuthMode("forgot");
+});
 
 async function submitAuth() {
   const username = usernameInput.value.trim();
-  if (!username) {
-    connectError.textContent = "Введите ник";
+
+  if (authMode === "twofa") {
+    const code = twofaCodeInput.value.trim();
+    if (!code || !pendingTempToken) {
+      connectError.textContent = "Введите код";
+      return;
+    }
+    connectError.textContent = "Проверка кода...";
+    connectBtn.disabled = true;
+    try {
+      const res = await fetch("/api/login/2fa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tempToken: pendingTempToken, code }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        connectError.textContent = data.error || "Неверный код";
+        connectBtn.disabled = false;
+        return;
+      }
+      localStorage.setItem("token", data.token);
+      connectWithToken(data.token);
+    } catch (err) {
+      connectError.textContent = "Не удалось связаться с сервером";
+      connectBtn.disabled = false;
+    }
     return;
   }
 
-  connectError.textContent = "Заходим...";
+  if (authMode === "forgot") {
+    const recoveryCode = recoveryCodeInput.value.trim();
+    const newPassword = newPasswordInput.value;
+    if (!username || !recoveryCode || !newPassword) {
+      connectError.textContent = "Заполните все поля";
+      return;
+    }
+    connectError.textContent = "Сброс пароля...";
+    connectBtn.disabled = true;
+    try {
+      const res = await fetch("/api/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, recoveryCode, newPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        connectError.textContent = data.error || "Не удалось сбросить пароль";
+        connectBtn.disabled = false;
+        return;
+      }
+      localStorage.setItem("token", data.token);
+      connectWithToken(data.token);
+    } catch (err) {
+      connectError.textContent = "Не удалось связаться с сервером";
+      connectBtn.disabled = false;
+    }
+    return;
+  }
+
+  const password = passwordInput.value;
+  if (!username || !password) {
+    connectError.textContent = "Заполните имя пользователя и пароль";
+    return;
+  }
+
+  connectError.textContent = authMode === "login" ? "Вход..." : "Регистрация...";
   connectBtn.disabled = true;
 
   try {
-    const res = await fetch("/api/join", {
+    const endpoint = authMode === "login" ? "/api/login" : "/api/register";
+    const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username }),
+      body: JSON.stringify({ username, password }),
     });
     const data = await res.json();
 
@@ -1147,7 +1361,25 @@ async function submitAuth() {
       return;
     }
 
+    if (data.need2FA) {
+      pendingTempToken = data.tempToken;
+      connectBtn.disabled = false;
+      setAuthMode("twofa");
+      return;
+    }
+
     localStorage.setItem("token", data.token);
+
+    if (authMode === "register" && data.recoveryCode) {
+      recoveryCodeDisplay.textContent = data.recoveryCode;
+      recoveryCodeModal.classList.remove("hidden");
+      recoveryCodeOkBtn.onclick = () => {
+        recoveryCodeModal.classList.add("hidden");
+        connectWithToken(data.token);
+      };
+      return;
+    }
+
     connectWithToken(data.token);
   } catch (err) {
     connectError.textContent = "Не удалось связаться с сервером";
@@ -1156,7 +1388,11 @@ async function submitAuth() {
 }
 
 connectBtn.addEventListener("click", submitAuth);
-usernameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitAuth(); });
+passwordInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitAuth(); });
+usernameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") passwordInput.focus(); });
+newPasswordInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitAuth(); });
+recoveryCodeInput.addEventListener("keydown", (e) => { if (e.key === "Enter") newPasswordInput.focus(); });
+twofaCodeInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submitAuth(); });
 
 function connectWithToken(token) {
   socket = io({ auth: { token } });
@@ -1185,11 +1421,11 @@ function connectWithToken(token) {
     meNameEl.textContent = myName;
     connectScreen.classList.add("hidden");
     app.classList.remove("hidden");
-    showWelcome();
+    messageInput.focus();
 
     channelHistory.length = 0;
     channelHistory.push(...history);
-    if (currentView.type === "channel" && uiMode === "chat") renderCurrentView();
+    if (currentView.type === "channel") renderCurrentView();
   });
 
   socket.on("message:new", (msg) => {
@@ -1812,7 +2048,7 @@ function registerConnectionHooks() {
 
   socket.on("call:room:count", (count) => {
     if (!inChannelCall) {
-      setWelcomeCallSub(count > 0 ? `Сейчас в войсе: ${count}` : "");
+      channelCallBtn.textContent = count > 0 ? `🎤 Присоединиться к звонку (${count})` : "🎤 Присоединиться к звонку";
     }
   });
 
@@ -1859,23 +2095,196 @@ async function handleSignal(pc, data, sendAnswer) {
   }
 }
 
-async function getMic() {
-  if (localStream) return localStream;
-  if (!isSecureContextForMedia()) {
-    throw new Error("insecure-context");
-  }
-  localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  return localStream;
+// ================= Настройки звука (микрофон/динамики/качество) =================
+const AUDIO_QUALITY_PRESETS = {
+  voice: {
+    label: "Голос (эконом трафика)",
+    hint: "Меньше данных, шумоподавление и эхоподавление включены — подходит для нестабильного интернета.",
+    constraints: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+    opusBitrate: 24000,
+    stereo: false,
+  },
+  hd: {
+    label: "Высокое (по умолчанию)",
+    hint: "Баланс качества и стабильности — рекомендуется для большинства.",
+    constraints: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, sampleRate: 48000 },
+    opusBitrate: 96000,
+    stereo: false,
+  },
+  studio: {
+    label: "Студийное (без обработки)",
+    hint: "Максимальное качество, стерео, без шумоподавления и эхоподавления — обязательно используйте наушники.",
+    constraints: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2, sampleRate: 48000 },
+    opusBitrate: 320000,
+    stereo: true,
+  },
+};
+
+let audioQuality = localStorage.getItem("audioQuality") || "hd";
+let selectedMicId = localStorage.getItem("selectedMicId") || "";
+let selectedSpeakerId = localStorage.getItem("selectedSpeakerId") || "";
+
+function buildMicConstraints() {
+  const preset = AUDIO_QUALITY_PRESETS[audioQuality] || AUDIO_QUALITY_PRESETS.hd;
+  const c = { ...preset.constraints };
+  if (selectedMicId) c.deviceId = { exact: selectedMicId };
+  return c;
 }
 
-// Браузеры (особенно мобильные) блокируют доступ к микрофону/камере вне
-// "безопасного контекста" — то есть везде, кроме HTTPS и localhost. Если вы
-// тестируете через локальный IP по обычному http://, звонки не будут
-// работать на телефоне даже с разрешённым доступом — деплойте на Render
-// (там HTTPS из коробки) или используйте туннель вроде ngrok/Cloudflare Tunnel.
-function isSecureContextForMedia() {
-  if (window.isSecureContext) return true;
-  return ["localhost", "127.0.0.1"].includes(location.hostname);
+// Поднимает битрейт/каналы Opus в уже сгенерированном SDP согласно выбранному
+// пресету качества. Без этого браузеры по умолчанию режут голос до ~32 кбит/с моно.
+function boostAudioSdp(sdp) {
+  const preset = AUDIO_QUALITY_PRESETS[audioQuality] || AUDIO_QUALITY_PRESETS.hd;
+  const opusMatch = sdp.match(/a=rtpmap:(\d+) opus\/48000\/2/);
+  if (!opusMatch) return sdp;
+  const pt = opusMatch[1];
+  const stereoParams = preset.stereo ? "stereo=1;sprop-stereo=1;" : "";
+  const extra = `${stereoParams}maxaveragebitrate=${preset.opusBitrate};maxplaybackrate=48000`;
+  const fmtpRegex = new RegExp(`a=fmtp:${pt} (.+)`);
+  if (fmtpRegex.test(sdp)) {
+    return sdp.replace(fmtpRegex, (line, params) => `a=fmtp:${pt} ${params};${extra}`);
+  }
+  return sdp.replace(opusMatch[0], `${opusMatch[0]}\r\na=fmtp:${pt} ${extra}`);
+}
+
+async function ensureMicPermissionForLabels() {
+  // Названия устройств доступны только после того, как пользователь хоть раз
+  // дал разрешение на микрофон — если разрешения ещё нет, запрашиваем и сразу отпускаем.
+  if (localStream) return;
+  try {
+    const tmp = await navigator.mediaDevices.getUserMedia({ audio: true });
+    tmp.getTracks().forEach((t) => t.stop());
+  } catch (e) {
+    // доступ не дали — оставим селекты пустыми, ничего страшного
+  }
+}
+
+async function populateAudioDevices() {
+  await ensureMicPermissionForLabels();
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const mics = devices.filter((d) => d.kind === "audioinput");
+  const speakers = devices.filter((d) => d.kind === "audiooutput");
+
+  micSelect.innerHTML = mics
+    .map((d, i) => `<option value="${escapeHtml(d.deviceId)}">${escapeHtml(d.label || "Микрофон " + (i + 1))}</option>`)
+    .join("");
+  speakerSelect.innerHTML = speakers.length
+    ? speakers
+        .map((d, i) => `<option value="${escapeHtml(d.deviceId)}">${escapeHtml(d.label || "Динамики " + (i + 1))}</option>`)
+        .join("")
+    : `<option value="">По умолчанию (браузер не даёт выбрать)</option>`;
+
+  if (selectedMicId && mics.some((d) => d.deviceId === selectedMicId)) micSelect.value = selectedMicId;
+  if (selectedSpeakerId && speakers.some((d) => d.deviceId === selectedSpeakerId)) speakerSelect.value = selectedSpeakerId;
+}
+
+function renderAudioQualityPicker() {
+  document.querySelectorAll("#audio-quality-picker .status-opt").forEach((btn) => {
+    btn.classList.toggle("selected", btn.dataset.quality === audioQuality);
+  });
+  audioQualityHint.textContent = (AUDIO_QUALITY_PRESETS[audioQuality] || AUDIO_QUALITY_PRESETS.hd).hint;
+}
+
+document.querySelectorAll("#audio-quality-picker .status-opt").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    audioQuality = btn.dataset.quality;
+    localStorage.setItem("audioQuality", audioQuality);
+    renderAudioQualityPicker();
+  });
+});
+
+micSelect.addEventListener("change", () => {
+  selectedMicId = micSelect.value;
+  localStorage.setItem("selectedMicId", selectedMicId);
+});
+speakerSelect.addEventListener("change", async () => {
+  selectedSpeakerId = speakerSelect.value;
+  localStorage.setItem("selectedSpeakerId", selectedSpeakerId);
+  if (micTestAudioEl.setSinkId && selectedSpeakerId) {
+    try { await micTestAudioEl.setSinkId(selectedSpeakerId); } catch (e) {}
+  }
+});
+
+// ----- Проверка микрофона (слышишь себя + индикатор уровня) -----
+let micTestStream = null;
+let micTestAudioCtx = null;
+let micTestRafId = null;
+const micTestAudioEl = new Audio();
+micTestAudioEl.autoplay = true;
+
+async function startMicTest() {
+  try {
+    micTestStream = await navigator.mediaDevices.getUserMedia({ audio: buildMicConstraints() });
+  } catch (e) {
+    addSystemMessage("Нет доступа к микрофону");
+    return;
+  }
+  micTestAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const source = micTestAudioCtx.createMediaStreamSource(micTestStream);
+
+  // Воспроизведение "себя" — через отдельный <audio>, чтобы можно было выбрать
+  // устройство вывода через setSinkId (Web Audio API это напрямую не умеет).
+  const dest = micTestAudioCtx.createMediaStreamDestination();
+  source.connect(dest);
+  micTestAudioEl.srcObject = dest.stream;
+  if (micTestAudioEl.setSinkId && selectedSpeakerId) {
+    try { await micTestAudioEl.setSinkId(selectedSpeakerId); } catch (e) {}
+  }
+  micTestAudioEl.play().catch(() => {});
+
+  // Индикатор уровня громкости
+  const analyser = micTestAudioCtx.createAnalyser();
+  analyser.fftSize = 512;
+  source.connect(analyser);
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  const tick = () => {
+    analyser.getByteFrequencyData(data);
+    const avg = data.reduce((a, b) => a + b, 0) / data.length;
+    micLevelFill.style.width = Math.min(100, (avg / 128) * 100) + "%";
+    micTestRafId = requestAnimationFrame(tick);
+  };
+  tick();
+
+  micTestBtn.textContent = "Остановить проверку";
+  micTestBtn.classList.add("active");
+}
+
+function stopMicTest() {
+  if (micTestRafId) cancelAnimationFrame(micTestRafId);
+  micTestRafId = null;
+  if (micTestStream) {
+    micTestStream.getTracks().forEach((t) => t.stop());
+    micTestStream = null;
+  }
+  if (micTestAudioCtx) {
+    micTestAudioCtx.close();
+    micTestAudioCtx = null;
+  }
+  micTestAudioEl.srcObject = null;
+  micLevelFill.style.width = "0%";
+  micTestBtn.textContent = "Проверить микрофон";
+  micTestBtn.classList.remove("active");
+}
+
+micTestBtn.addEventListener("click", () => {
+  if (micTestStream) stopMicTest();
+  else startMicTest();
+});
+
+audioSettingsBtn.addEventListener("click", async () => {
+  audioSettingsModal.classList.remove("hidden");
+  renderAudioQualityPicker();
+  await populateAudioDevices();
+});
+audioSettingsCloseBtn.addEventListener("click", () => {
+  stopMicTest();
+  audioSettingsModal.classList.add("hidden");
+});
+
+async function getMic() {
+  if (localStream) return localStream;
+  localStream = await navigator.mediaDevices.getUserMedia({ audio: buildMicConstraints() });
+  return localStream;
 }
 
 function stopMic() {
@@ -1887,31 +2296,21 @@ function stopMic() {
 
 function createPeerConnection(onIceCandidate, onTrack) {
   const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  // Перехватываем setLocalDescription, чтобы поднять битрейт/качество Opus
+  // во ВСЕХ офферах/ответах звонка, не трогая каждое место создания offer'а по отдельности.
+  const originalSetLocalDescription = pc.setLocalDescription.bind(pc);
+  pc.setLocalDescription = (desc) => {
+    if (desc && desc.sdp) desc.sdp = boostAudioSdp(desc.sdp);
+    return originalSetLocalDescription(desc);
+  };
   pc.onicecandidate = (e) => {
     if (e.candidate) onIceCandidate(e.candidate.toJSON ? e.candidate.toJSON() : e.candidate);
   };
-  // Передаём весь трек, а не только stream — нужно различать голос (audio)
-  // и демонстрацию экрана (video), у них разные MediaStream.
-  pc.ontrack = (e) => onTrack(e.streams[0], e.track);
+  pc.ontrack = (e) => onTrack(e.streams[0]);
   return pc;
 }
 
 // ----- DM звонки -----
-
-// Единое, понятное сообщение об ошибке доступа к микрофону — отдельно
-// объясняем самую частую причину (небезопасный контекст: http на телефоне).
-function micErrorMessage(e) {
-  if (e && e.message === "insecure-context") {
-    return "Микрофон недоступен: сайт открыт не по HTTPS. На телефоне это заблокировано браузером — откройте адрес через https:// (например, задеплойте на Render) или зайдите через localhost.";
-  }
-  if (e && e.name === "NotAllowedError") {
-    return "Доступ к микрофону запрещён. Разрешите его в настройках браузера/сайта и попробуйте снова.";
-  }
-  if (e && e.name === "NotFoundError") {
-    return "Микрофон не найден на этом устройстве.";
-  }
-  return "Нет доступа к микрофону.";
-}
 
 dmCallBtn.addEventListener("click", () => {
   if (currentView.type !== "dm") return;
@@ -1926,7 +2325,7 @@ async function startDmCall(toUsername) {
   try {
     await getMic();
   } catch (e) {
-    addSystemMessage(micErrorMessage(e));
+    addSystemMessage("Нет доступа к микрофону");
     return;
   }
   dmCallState = { peer: toUsername, pc: null, status: "ringing-out" };
@@ -1943,7 +2342,7 @@ acceptCallBtn.addEventListener("click", async () => {
     await getMic();
   } catch (e) {
     socket.emit("call:dm:decline", { to: from });
-    addSystemMessage(micErrorMessage(e));
+    addSystemMessage("Нет доступа к микрофону");
     return;
   }
   dmCallState = { peer: from, pc: null, status: "active" };
@@ -1962,7 +2361,7 @@ declineCallBtn.addEventListener("click", () => {
 async function setupDmPeerConnection(peerUsername, isCaller) {
   const pc = createPeerConnection(
     (candidate) => socket.emit("call:dm:signal", { to: peerUsername, data: candidate }),
-    (stream, track) => playRemoteStream(peerUsername, stream, track)
+    (stream) => playRemoteStream(peerUsername, stream)
   );
   dmCallState.pc = pc;
   localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
@@ -1988,6 +2387,14 @@ function endDmCall(notifyPeer) {
 
 // ----- Групповой звонок в #general -----
 
+channelCallBtn.addEventListener("click", () => {
+  if (inChannelCall) {
+    leaveChannelCall();
+  } else {
+    joinChannelCall();
+  }
+});
+
 async function joinChannelCall() {
   if (dmCallState) {
     addSystemMessage("Сначала завершите текущий звонок");
@@ -1996,27 +2403,21 @@ async function joinChannelCall() {
   try {
     await getMic();
   } catch (e) {
-    addSystemMessage(micErrorMessage(e));
+    addSystemMessage("Нет доступа к микрофону");
     return;
   }
   inChannelCall = true;
-  updateCallButtonsUI();
-  setWelcomeCallSub("Вы в звонке");
+  channelCallBtn.textContent = "🎤 Покинуть звонок";
+  channelCallBtn.classList.add("in-call");
   socket.emit("call:room:join");
   showCallBar("Звонок в #general");
-  // Показываем чат под звонком, как и просили — войс сам по себе не должен
-  // занимать весь экран. Если человек нажал "Войти в войс" ещё на
-  // приветственном экране, открываем для него #general.
-  const wasWelcome = uiMode === "welcome";
-  enterChatMode();
-  if (wasWelcome) switchToChannel();
 }
 
 async function addChannelPeer(socketId, username, isCaller) {
   if (channelCallPeers.has(socketId)) return channelCallPeers.get(socketId);
   const pc = createPeerConnection(
     (candidate) => socket.emit("call:room:signal", { to: socketId, data: candidate }),
-    (stream, track) => playRemoteStream(socketId, stream, track, username)
+    (stream) => playRemoteStream(socketId, stream)
   );
   localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
   const entry = { username, pc };
@@ -2049,8 +2450,8 @@ function leaveChannelCall() {
   });
   channelCallPeers.clear();
   inChannelCall = false;
-  updateCallButtonsUI();
-  setWelcomeCallSub("");
+  channelCallBtn.textContent = "🎤 Присоединиться к звонку";
+  channelCallBtn.classList.remove("in-call");
   stopScreenShare();
   stopMic();
   hideCallBar();
@@ -2058,56 +2459,25 @@ function leaveChannelCall() {
 
 // ----- Общее: аудио собеседников, мьют, показ экрана, панель звонка -----
 
-// Аудио-дорожки (голос или звук с экрана) — держим по одному <audio> элементу
-// на каждый уникальный MediaStream, чтобы голос и системный звук демонстрации
-// экрана от одного и того же человека не затирали друг друга.
-function playRemoteStream(key, stream, track, displayName) {
-  if (track && track.kind === "video") {
-    showRemoteScreenShare(key, stream, displayName || key);
-    return;
-  }
-  const elId = "remote-audio-" + key + "-" + stream.id;
-  let audioEl = document.getElementById(elId);
+function playRemoteStream(key, stream) {
+  let audioEl = document.getElementById("remote-audio-" + key);
   if (!audioEl) {
     audioEl = document.createElement("audio");
-    audioEl.id = elId;
+    audioEl.id = "remote-audio-" + key;
     audioEl.autoplay = true;
-    audioEl.dataset.peerKey = key;
     remoteAudioContainer.appendChild(audioEl);
   }
   audioEl.srcObject = stream;
 }
 
 function removeRemoteAudio(key) {
-  remoteAudioContainer.querySelectorAll(`[data-peer-key="${CSS.escape(String(key))}"]`).forEach((el) => el.remove());
-  hideRemoteScreenShare(key);
+  const audioEl = document.getElementById("remote-audio-" + key);
+  if (audioEl) audioEl.remove();
 }
 
 function clearRemoteAudio() {
   remoteAudioContainer.innerHTML = "";
-  hideRemoteScreenShare();
 }
-
-// ----- Просмотр чужой демонстрации экрана -----
-let activeScreenShareKey = null;
-
-function showRemoteScreenShare(key, stream, displayName) {
-  activeScreenShareKey = key;
-  screenShareVideo.srcObject = stream;
-  screenShareLabel.textContent = `Экран: ${displayName}`;
-  screenShareViewer.classList.remove("hidden");
-  const track = stream.getVideoTracks()[0];
-  if (track) track.onended = () => hideRemoteScreenShare(key);
-}
-
-function hideRemoteScreenShare(key) {
-  if (key !== undefined && key !== activeScreenShareKey) return;
-  activeScreenShareKey = null;
-  screenShareVideo.srcObject = null;
-  screenShareViewer.classList.add("hidden");
-}
-
-screenShareCloseBtn.addEventListener("click", () => hideRemoteScreenShare());
 
 function showCallBar(title) {
   callBarTitle.textContent = title;
@@ -2155,69 +2525,40 @@ function activePeerConnections() {
   return pcs;
 }
 
-// Демонстрация экрана в максимальном качестве, которое отдаёт браузер:
-// 1080p / 60fps. Реальный результат зависит от того, что показывает ОС
-// (некоторые системы ограничивают захват экрана до 30fps), но мы всегда
-// запрашиваем максимум и поднимаем битрейт, чтобы картинка не мылилась.
-const SCREEN_SHARE_CONSTRAINTS = {
-  video: {
-    width: { ideal: 1920, max: 1920 },
-    height: { ideal: 1080, max: 1080 },
-    frameRate: { ideal: 60, max: 60 },
-  },
-  // Системный звук (звук из игры/видео) — поддерживается не везде,
-  // но если браузер это умеет, гостям будет слышно и звук с экрана.
-  audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-};
-const SCREEN_SHARE_MAX_BITRATE = 8_000_000; // ~8 Мбит/с — с запасом для 1080p60
-
 async function startScreenShare() {
   let stream;
   try {
-    stream = await navigator.mediaDevices.getDisplayMedia(SCREEN_SHARE_CONSTRAINTS);
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { width: { ideal: 1920, max: 1920 }, height: { ideal: 1080, max: 1080 }, frameRate: { ideal: 60, max: 60 } },
+      audio: false,
+    });
   } catch (e) {
     return; // пользователь отменил выбор окна/экрана
   }
   screenStream = stream;
   const track = stream.getVideoTracks()[0];
-  // Подсказка браузеру, что это динамичная картинка (видео/игра), а не
-  // статичный текст — так кодировщик выделяет больше бит на движение.
-  if ("contentHint" in track) track.contentHint = "motion";
   isScreenSharing = true;
   toggleScreenBtn.classList.add("active");
 
-  const audioTrack = stream.getAudioTracks()[0];
-
-  // Добавление новых дорожек к уже установленному соединению требует
-  // повторного согласования (renegotiation). Добавляем видео- и (если есть)
-  // аудио-дорожку СНАЧАЛА, и только потом делаем один offer — иначе вторая
-  // дорожка "молча" остаётся не согласованной и звук/видео демонстрации не
-  // доходит до собеседника.
+  // Добавление новой дорожки к уже установленному соединению требует повторного
+  // согласования (renegotiation) — создаём и отправляем новый offer вручную.
   for (const pc of activePeerConnections()) {
     const sender = pc.addTrack(track, screenStream);
-    await applyScreenShareEncoding(sender);
-    if (audioTrack) pc.addTrack(audioTrack, screenStream);
+    try {
+      const params = sender.getParameters();
+      if (!params.encodings) params.encodings = [{}];
+      params.encodings[0].maxBitrate = 8_000_000; // ~8 Мбит/с — с запасом для 1080p60
+      params.degradationPreference = "maintain-resolution";
+      await sender.setParameters(params);
+    } catch (e) {
+      // setParameters может быть недоступен до первого согласования в некоторых браузерах — не критично
+    }
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     sendRenegotiationOffer(pc, offer);
   }
 
   track.onended = () => stopScreenShare();
-}
-
-// Поднимает битрейт и просит браузер держать 1080p60, а не жертвовать
-// разрешением/fps в пользу экономии канала.
-async function applyScreenShareEncoding(sender) {
-  try {
-    const params = sender.getParameters();
-    if (!params.encodings || !params.encodings.length) params.encodings = [{}];
-    params.encodings[0].maxBitrate = SCREEN_SHARE_MAX_BITRATE;
-    params.encodings[0].maxFramerate = 60;
-    if ("degradationPreference" in params) params.degradationPreference = "maintain-resolution";
-    await sender.setParameters(params);
-  } catch (e) {
-    // Не все браузеры разрешают тонкую настройку — молча продолжаем с дефолтом
-  }
 }
 
 function sendRenegotiationOffer(pc, offer) {
