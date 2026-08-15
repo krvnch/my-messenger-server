@@ -754,7 +754,7 @@ createGroupBtn.addEventListener("click", () => {
     .forEach((u) => {
       const opt = document.createElement("label");
       opt.className = "group-member-opt";
-      opt.innerHTML = `<input type="checkbox" value="${escapeHtml(u.username)}" /> ${u.avatar ? u.avatar + " " : ""}${escapeHtml(u.username)}`;
+      opt.innerHTML = `<input type="checkbox" value="${escapeHtml(u.username)}" /> ${u.avatar ? escapeHtml(u.avatar) + " " : ""}${escapeHtml(u.username)}`;
       groupMembersList.appendChild(opt);
     });
   if (!onlineUsersList.some((u) => u.username !== myName)) {
@@ -849,7 +849,7 @@ function renderGroupSettingsMembers(group) {
     addable.forEach((u) => {
       const opt = document.createElement("label");
       opt.className = "group-member-opt";
-      opt.innerHTML = `<input type="checkbox" value="${escapeHtml(u.username)}" /> ${u.avatar ? u.avatar + " " : ""}${escapeHtml(u.username)}`;
+      opt.innerHTML = `<input type="checkbox" value="${escapeHtml(u.username)}" /> ${u.avatar ? escapeHtml(u.avatar) + " " : ""}${escapeHtml(u.username)}`;
       groupEditAddList.appendChild(opt);
     });
   }
@@ -892,7 +892,7 @@ function renderOnlineList(users) {
     const isActive = currentView.type === "dm" && currentView.withUser === u.username;
     li.className = (isSelf ? "self" : "") + (isActive ? " active-dm" : "");
     const status = u.status || "online";
-    const avatarHtml = u.avatar ? `<span>${u.avatar}</span>` : `<span class="status-dot ${status}"></span>`;
+    const avatarHtml = u.avatar ? `<span>${escapeHtml(u.avatar)}</span>` : `<span class="status-dot ${status}"></span>`;
     li.innerHTML = `${avatarHtml} ${escapeHtml(u.username)}${isSelf ? " (вы)" : ""}${u.avatar ? `<span class="status-dot inline ${status}" title="${STATUS_LABELS[status]}"></span>` : ""}`;
     const unread = unreadDm.get(u.username);
     if (!isSelf && unread && unread.count > 0) {
