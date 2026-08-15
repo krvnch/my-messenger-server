@@ -169,6 +169,7 @@ html, body {
   gap: 8px;
   padding: 16px;
   border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, #7c6ff014, transparent);
 }
 
 .channel-list {
@@ -227,11 +228,12 @@ html, body {
   padding: 6px 8px;
   border-radius: 8px;
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: background 0.12s ease, transform 0.12s ease;
 }
 
 .online-list li:hover {
   background: var(--bg-elevated);
+  transform: translateX(2px);
 }
 
 .online-list li.self {
@@ -408,6 +410,9 @@ html, body {
 
 .messages::-webkit-scrollbar { width: 8px; }
 .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
+.messages::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+.online-section::-webkit-scrollbar { width: 6px; }
+.online-section::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
 
 .msg-row {
   display: flex;
@@ -545,23 +550,61 @@ html, body {
 
 /* ---------- Звонки ---------- */
 
-/* Единственная большая динамическая кнопка звонка — плавает по центру экрана */
-.mega-call-wrap {
-  position: fixed;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 40;
-  pointer-events: none; /* сама обёртка не мешает кликам по чату вокруг */
+/* Приветственный экран: показывается вместо сообщений, пока пользователь не
+   выбрал, с чего начать. Занимает всю область чата, с лёгким движением фона
+   для ощущения "живого" интерфейса. */
+.welcome-panel {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background:
+    radial-gradient(circle at 22% 28%, #7c6ff02e, transparent 45%),
+    radial-gradient(circle at 78% 72%, #ff7a592a, transparent 45%);
+  animation: welcome-drift 12s ease-in-out infinite alternate;
 }
 
-.mega-call-btn {
+@keyframes welcome-drift {
+  0% { background-position: 0% 0%, 100% 100%; }
+  100% { background-position: 8% 6%, 92% 94%; }
+}
+
+.welcome-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 4px;
+}
+
+.welcome-hello {
+  font-family: "Outfit", sans-serif;
+  font-weight: 700;
+  font-size: 26px;
+  margin-bottom: 2px;
+}
+
+.welcome-sub {
+  color: var(--text-muted);
+  font-size: 14px;
+  margin: 0 0 34px;
+}
+
+.welcome-actions {
+  display: flex;
+  gap: 28px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.welcome-action-btn {
   pointer-events: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 5px;
   width: 168px;
   height: 168px;
   border-radius: 50%;
@@ -569,21 +612,32 @@ html, body {
   cursor: pointer;
   font-family: "Outfit", sans-serif;
   color: white;
+  transition: transform 0.2s ease, box-shadow 0.25s ease, background 0.3s ease;
+}
+
+.welcome-action-btn:hover { transform: scale(1.05); }
+.welcome-action-btn:active { transform: scale(0.97); }
+
+.welcome-action-call {
   background: radial-gradient(circle at 30% 25%, #9d90ff, var(--accent) 60%, #5b4fd6 100%);
   box-shadow:
     0 0 0 1px #ffffff14 inset,
     0 20px 50px -12px var(--accent-soft),
     0 0 60px 0 #7c6ff055;
   animation: mega-breathe 3.2s ease-in-out infinite;
-  transition: transform 0.2s ease, box-shadow 0.25s ease, background 0.3s ease;
 }
 
-.mega-call-btn:hover {
-  transform: scale(1.05);
+.welcome-action-call.in-call {
+  background: radial-gradient(circle at 30% 25%, #ff9d85, var(--accent-2) 60%, #d4573a 100%);
+  animation: mega-pulse-live 1.8s ease-in-out infinite;
 }
 
-.mega-call-btn:active {
-  transform: scale(0.97);
+.welcome-action-chat {
+  background: radial-gradient(circle at 30% 25%, #4ee2c4, #22b8a3 60%, #148f80 100%);
+  box-shadow:
+    0 0 0 1px #ffffff14 inset,
+    0 20px 50px -12px #22b8a355,
+    0 0 60px 0 #22b8a333;
 }
 
 @keyframes mega-breathe {
@@ -591,46 +645,69 @@ html, body {
   50% { box-shadow: 0 0 0 1px #ffffff14 inset, 0 20px 60px -8px var(--accent-soft), 0 0 90px 10px #7c6ff077; }
 }
 
-.mega-call-icon {
-  font-size: 40px;
-  line-height: 1;
-  filter: drop-shadow(0 2px 6px #00000055);
-}
-
-.mega-call-label {
-  font-weight: 700;
-  font-size: 15px;
-  letter-spacing: 0.2px;
-}
-
-.mega-call-sub {
-  font-size: 11px;
-  font-weight: 500;
-  opacity: 0.85;
-}
-
-.mega-call-btn.in-call {
-  background: radial-gradient(circle at 30% 25%, #ff9d85, var(--accent-2) 60%, #d4573a 100%);
-  animation: mega-pulse-live 1.8s ease-in-out infinite;
-}
-
 @keyframes mega-pulse-live {
   0%, 100% { box-shadow: 0 0 0 1px #ffffff14 inset, 0 20px 50px -12px #ff7a5955, 0 0 50px 0 #ff7a5944; }
   50% { box-shadow: 0 0 0 1px #ffffff14 inset, 0 20px 60px -8px #ff7a5977, 0 0 80px 6px #ff7a5966; }
 }
 
+.welcome-action-icon {
+  font-size: 38px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 6px #00000055);
+}
+
+.welcome-action-label {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.2px;
+}
+
+.welcome-action-sub {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+/* Компактная кнопка звонка в шапке чата (видна, когда чат уже открыт) */
+.header-call-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  color: var(--text-main);
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: filter 0.15s ease, transform 0.15s ease;
+  -webkit-app-region: no-drag;
+}
+
+.header-call-btn:hover { filter: brightness(1.15); transform: translateY(-1px); }
+
+.header-call-btn.in-call {
+  background: #ff7a5922;
+  border-color: var(--accent-2);
+  animation: header-call-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes header-call-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 #ff7a5955; }
+  50% { box-shadow: 0 0 0 5px #ff7a5900; }
+}
+
 @media (max-width: 640px) {
-  .mega-call-wrap {
-    top: auto;
-    bottom: 96px;
-    transform: translate(-50%, 0);
+  .welcome-actions { gap: 16px; }
+  .welcome-action-btn {
+    width: 130px;
+    height: 130px;
   }
-  .mega-call-btn {
-    width: 128px;
-    height: 128px;
-  }
-  .mega-call-icon { font-size: 30px; }
-  .mega-call-label { font-size: 12px; }
+  .welcome-action-icon { font-size: 30px; }
+  .welcome-action-label { font-size: 12px; }
+  .welcome-hello { font-size: 21px; }
 }
 
 .chat-header-right {
