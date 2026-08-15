@@ -62,12 +62,27 @@ fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 // - Content-Disposition: attachment для всего, кроме картинок — файл
 //   будет скачиваться, а не открываться и выполняться прямо в браузере.
 const INLINE_SAFE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".webm", ".ogg", ".m4a", ".mp3", ".wav", ".mp4"]);
+// По умолчанию Express определяет Content-Type по расширению файла и для
+// .webm выставляет "video/webm" (даже если внутри только звук) — из-за этого
+// некоторые браузеры отказываются проигрывать голосовые сообщения. Здесь
+// принудительно подставляем правильный аудио-тип.
+const AUDIO_CONTENT_TYPES = {
+  ".webm": "audio/webm",
+  ".ogg": "audio/ogg",
+  ".m4a": "audio/mp4",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+};
 app.use(
   "/uploads",
   express.static(UPLOADS_DIR, {
     setHeaders: (res, filePath) => {
       res.setHeader("X-Content-Type-Options", "nosniff");
-      if (!INLINE_SAFE_EXT.has(path.extname(filePath).toLowerCase())) {
+      const ext = path.extname(filePath).toLowerCase();
+      if (AUDIO_CONTENT_TYPES[ext]) {
+        res.setHeader("Content-Type", AUDIO_CONTENT_TYPES[ext]);
+      }
+      if (!INLINE_SAFE_EXT.has(ext)) {
         res.setHeader("Content-Disposition", "attachment");
       }
     },
