@@ -22,30 +22,33 @@ html, body {
   height: 100%;
   --g1x: 12; --g1y: 12; --g2x: 82; --g2y: 88; --g3x: 50; --g3y: 100;
   background:
-    radial-gradient(circle at var(--g1x)% var(--g1y)%, rgba(125, 106, 247, 0.24), transparent 22%),
-    radial-gradient(circle at var(--g2x)% var(--g2y)%, rgba(120, 216, 255, 0.14), transparent 28%),
-    radial-gradient(circle at var(--g3x)% var(--g3y)%, rgba(94, 130, 255, 0.10), transparent 26%),
+    radial-gradient(circle at var(--g1x)% var(--g1y)%, rgba(125, 106, 247, 0.20), transparent 22%),
+    radial-gradient(circle at var(--g2x)% var(--g2y)%, rgba(120, 216, 255, 0.10), transparent 28%),
+    radial-gradient(circle at var(--g3x)% var(--g3y)%, rgba(94, 130, 255, 0.08), transparent 26%),
     #02040a;
   color: var(--text-main);
   font-family: "Inter", -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   overflow: hidden;
  }
 
- /* Dynamic overlay for extra shimmer */
+ /* Dynamic overlay for extra shimmer (reduced intensity for readability) */
  .dynamic-gradient {
    position: fixed;
    inset: 0;
    pointer-events: none;
    z-index: 0;
    mix-blend-mode: screen;
-   background: linear-gradient(115deg, rgba(124,111,240,0.06), rgba(118,215,255,0.04) 30%, rgba(255,255,255,0.02));
-   filter: blur(30px) saturate(120%);
-   animation: slow-rotate 18s linear infinite;
+   background: linear-gradient(115deg, rgba(124,111,240,0.03), rgba(118,215,255,0.02) 30%, rgba(255,255,255,0.01));
+   filter: blur(18px) saturate(110%);
+   opacity: 0.85;
+   animation: slow-rotate 28s linear infinite;
  }
-
+ 
  @keyframes slow-rotate {
-   from { transform: rotate(0deg) scale(1.02); }
-   to { transform: rotate(360deg) scale(1.02); }
+   from { transform: rotate(0deg) scale(1.01); }
+   to { transform: rotate(360deg) scale(1.01); }
  }
 
 .hidden { display: none !important; }
@@ -224,16 +227,9 @@ button, input, select { font: inherit; }
   100% { transform: translateX(240%) skewX(-6deg); opacity: 0.0; }
 }
 
-/* Floating subtle motion for panels */
-.app-shell, .connect-card {
-  transform-origin: center;
-  animation: floaty 8s ease-in-out infinite;
-}
-@keyframes floaty {
-  0% { transform: translateY(0px) scale(1); }
-  50% { transform: translateY(-6px) scale(1.002); }
-  100% { transform: translateY(0px) scale(1); }
-}
+/* Floating subtle motion removed to preserve text clarity — hover lift kept */
+.app-shell, .connect-card { transform-origin: center; }
+.app-shell:hover, .connect-card:hover { transform: translateY(-6px); transition: transform 0.28s ease; }
 
 /* Buttons: glass + glow + ripple */
 .pill-btn, .primary-btn, .call-trigger-btn, .call-control-btn {
@@ -247,7 +243,7 @@ button, input, select { font: inherit; }
   transition: transform 0.22s ease, box-shadow 0.22s ease;
   position: relative;
 }
-.msg-row:hover .bubble { transform: translateY(-4px); box-shadow: 0 18px 40px rgba(2,6,14,0.6); }
+.msg-row:hover .bubble { box-shadow: 0 18px 40px rgba(2,6,14,0.6); }
 
 /* Message glow on mention */
 .mention-highlight { box-shadow: 0 6px 28px rgba(124,111,240,0.12) inset; border: 1px solid rgba(124,111,240,0.08); }
@@ -270,14 +266,14 @@ button, input, select { font: inherit; }
   background: linear-gradient(120deg, rgba(125,106,247,0.04), rgba(120,216,255,0.02));
   mix-blend-mode: overlay;
   pointer-events: none;
-  opacity: 0.85;
+  opacity: 0.06; /* very subtle */
   transform-origin: center;
-  animation: bubble-flow 12s linear infinite;
+  animation: bubble-flow 18s ease-in-out infinite;
 }
 @keyframes bubble-flow {
-  0% { transform: translateY(0) rotate(0deg); }
-  50% { transform: translateY(-6px) rotate(4deg); }
-  100% { transform: translateY(0) rotate(0deg); }
+  0% { opacity: 0.04; }
+  50% { opacity: 0.08; }
+  100% { opacity: 0.04; }
 }
 
 /* subtle scrollbar style */
