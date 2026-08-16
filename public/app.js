@@ -211,16 +211,51 @@ function startDynamicUI() {
   requestAnimationFrame(frame);
 }
 
+// Visual theme handling
+let visualTheme = localStorage.getItem('visualTheme') || 'normal'; // 'normal' | 'artist'
+function applyVisualTheme(v) {
+  visualTheme = v;
+  document.documentElement.setAttribute('data-visual', v);
+  const dyn = document.getElementById('dynamic-gradient');
+  const canvas = document.getElementById('particle-canvas');
+  const btn = document.getElementById('visual-theme-toggle');
+  if (btn) btn.classList.toggle('active', v === 'artist');
+  if (dyn) dyn.style.display = v === 'artist' ? 'block' : 'none';
+  if (canvas) canvas.style.display = v === 'artist' ? 'block' : 'none';
+  localStorage.setItem('visualTheme', v);
+}
+
+let particleStopFn = null;
+
 // start dynamic UI after a short delay so initial paint is quick
 setTimeout(() => {
   try { startDynamicUI(); } catch (e) { /* graceful fallback */ }
-  try { startParticles(); } catch (e) { /* fallback */ }
+  try {
+    if (visualTheme === 'artist') particleStopFn = startParticles();
+  } catch (e) { /* fallback */ }
+  applyVisualTheme(visualTheme);
 }, 300);
+
+// wire visual toggle button
+const visualToggleBtn = document.getElementById('visual-theme-toggle');
+if (visualToggleBtn) {
+  visualToggleBtn.addEventListener('click', () => {
+    const next = visualTheme === 'artist' ? 'normal' : 'artist';
+    // stop particles if any
+    if (particleStopFn && typeof particleStopFn === 'function') {
+      particleStopFn(); particleStopFn = null;
+    }
+    if (next === 'artist') {
+      particleStopFn = startParticles();
+    }
+    applyVisualTheme(next);
+  });
+}
 
 // --- particle canvas (lightweight) ---
 function startParticles() {
   const canvas = document.getElementById('particle-canvas');
-  if (!canvas) return;
+  if (!canvas) return () => {};
   const ctx = canvas.getContext('2d');
   let width = 0, height = 0, DPR = window.devicePixelRatio || 1;
   function resize() {
@@ -250,9 +285,10 @@ function startParticles() {
   }
 
   let last = performance.now();
+  let rafId = null;
   function step(now) {
     const dt = Math.min(40, now - last) / 1000; last = now;
-    if (document.hidden) { requestAnimationFrame(step); return; }
+    if (document.hidden) { rafId = requestAnimationFrame(step); return; }
     ctx.clearRect(0,0,width,height);
     // faint vignette
     ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.fillRect(0,0,width,height);
@@ -284,9 +320,16 @@ function startParticles() {
     }
 
     ctx.globalCompositeOperation = 'source-over';
-    requestAnimationFrame(step);
+    rafId = requestAnimationFrame(step);
   }
-  requestAnimationFrame(step);
+  rafId = requestAnimationFrame(step);
+
+  // return stop function that cancels animation and cleans up
+  return function stopParticles() {
+    if (rafId) cancelAnimationFrame(rafId);
+    window.removeEventListener('resize', resize);
+    try { ctx.clearRect(0,0,canvas.width,canvas.height); } catch(e) {}
+  };
 }
 
 // ================= Звук нового сообщения =================

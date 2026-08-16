@@ -10,8 +10,9 @@
 </head>
 <body>
   <canvas id="particle-canvas" class="particle-canvas" aria-hidden="true"></canvas>
+  <div id="dynamic-gradient" class="dynamic-gradient" aria-hidden="true"></div>
 
-  <!-- Экран входа / регистрации / восстановления пароля -->
+  <!-- Экран подключения / регистрации / восстановления пароля -->
   <div id="connect-screen" class="connect-screen">
     <div class="connect-card">
       <div class="logo">
@@ -69,6 +70,7 @@
         </div>
 
         <div class="topbar-actions">
+          <button id="visual-theme-toggle" class="pill-btn ghost" title="Visual theme">🎨</button>
           <button id="voice-enter-btn" class="pill-btn primary" type="button">Войти в войс</button>
           <button id="chat-open-btn" class="pill-btn secondary" type="button">Зайти в чат</button>
           <button id="members-panel-btn" class="pill-btn ghost" type="button">
