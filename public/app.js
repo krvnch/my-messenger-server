@@ -211,10 +211,126 @@ function startDynamicUI() {
   requestAnimationFrame(frame);
 }
 
+// Visual theme handling
+let visualTheme = localStorage.getItem('visualTheme') || 'normal'; // 'normal' | 'artist'
+function applyVisualTheme(v) {
+  visualTheme = v;
+  document.documentElement.setAttribute('data-visual', v);
+  const dyn = document.getElementById('dynamic-gradient');
+  const canvas = document.getElementById('particle-canvas');
+  const btn = document.getElementById('visual-theme-toggle');
+  if (btn) btn.classList.toggle('active', v === 'artist');
+  if (dyn) dyn.style.display = v === 'artist' ? 'block' : 'none';
+  if (canvas) canvas.style.display = v === 'artist' ? 'block' : 'none';
+  localStorage.setItem('visualTheme', v);
+}
+
+let particleStopFn = null;
+
 // start dynamic UI after a short delay so initial paint is quick
 setTimeout(() => {
   try { startDynamicUI(); } catch (e) { /* graceful fallback */ }
+  try {
+    if (visualTheme === 'artist') particleStopFn = startParticles();
+  } catch (e) { /* fallback */ }
+  applyVisualTheme(visualTheme);
 }, 300);
+
+// wire visual toggle button
+const visualToggleBtn = document.getElementById('visual-theme-toggle');
+if (visualToggleBtn) {
+  visualToggleBtn.addEventListener('click', () => {
+    const next = visualTheme === 'artist' ? 'normal' : 'artist';
+    // stop particles if any
+    if (particleStopFn && typeof particleStopFn === 'function') {
+      particleStopFn(); particleStopFn = null;
+    }
+    if (next === 'artist') {
+      particleStopFn = startParticles();
+    }
+    applyVisualTheme(next);
+  });
+}
+
+// --- particle canvas (lightweight) ---
+function startParticles() {
+  const canvas = document.getElementById('particle-canvas');
+  if (!canvas) return () => {};
+  const ctx = canvas.getContext('2d');
+  let width = 0, height = 0, DPR = window.devicePixelRatio || 1;
+  function resize() {
+    width = window.innerWidth; height = window.innerHeight;
+    canvas.width = Math.floor(width * DPR);
+    canvas.height = Math.floor(height * DPR);
+    canvas.style.width = width + 'px';
+    canvas.style.height = height + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  const isMobile = Math.min(width, height) < 720;
+  const PARTICLE_COUNT = isMobile ? 18 : 48;
+  const particles = [];
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    particles.push({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      r: 1 + Math.random() * (isMobile ? 2.2 : 3.6),
+      vx: (Math.random() - 0.5) * (isMobile ? 0.2 : 0.6),
+      vy: (Math.random() - 0.5) * (isMobile ? 0.2 : 0.6),
+      hue: 260 + Math.random() * 80,
+      life: Math.random() * 100,
+    });
+  }
+
+  let last = performance.now();
+  let rafId = null;
+  function step(now) {
+    const dt = Math.min(40, now - last) / 1000; last = now;
+    if (document.hidden) { rafId = requestAnimationFrame(step); return; }
+    ctx.clearRect(0,0,width,height);
+    // faint vignette
+    ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.fillRect(0,0,width,height);
+    for (const p of particles) {
+      p.x += p.vx * (1 + Math.sin(now/700 + p.life) * 0.3) * dt * 60;
+      p.y += p.vy * (1 + Math.cos(now/800 + p.life) * 0.2) * dt * 60;
+      p.life += dt * 10;
+      if (p.x < -20) p.x = width + 20; if (p.x > width + 20) p.x = -20;
+      if (p.y < -20) p.y = height + 20; if (p.y > height + 20) p.y = -20;
+      const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r*12);
+      g.addColorStop(0, `hsla(${p.hue},95%,70%,0.14)`);
+      g.addColorStop(0.2, `hsla(${p.hue},95%,60%,0.06)`);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p.x, p.y, p.r*6, 0, Math.PI*2); ctx.fill();
+    }
+
+    // connect nearby particles with thin lines (artsy)
+    ctx.lineWidth = 0.6; ctx.globalCompositeOperation = 'lighter';
+    for (let i=0;i<particles.length;i++){
+      for (let j=i+1;j<particles.length;j++){
+        const a = particles[i], b = particles[j];
+        const dx = a.x-b.x, dy = a.y-b.y; const dist = Math.hypot(dx,dy);
+        if (dist < (isMobile?90:140)) {
+          const alpha = 0.12*(1 - dist/(isMobile?90:140));
+          ctx.strokeStyle = `hsla(${(a.hue+b.hue)/2},90%,60%,${alpha})`;
+          ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+        }
+      }
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+    rafId = requestAnimationFrame(step);
+  }
+  rafId = requestAnimationFrame(step);
+
+  // return stop function that cancels animation and cleans up
+  return function stopParticles() {
+    if (rafId) cancelAnimationFrame(rafId);
+    window.removeEventListener('resize', resize);
+    try { ctx.clearRect(0,0,canvas.width,canvas.height); } catch(e) {}
+  };
+}
 
 // ================= Звук нового сообщения =================
 let soundEnabled = localStorage.getItem("soundEnabled") !== "off";

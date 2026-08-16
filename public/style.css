@@ -33,23 +33,47 @@ html, body {
   overflow: hidden;
  }
 
- /* Dynamic overlay for extra shimmer (reduced intensity for readability) */
+ /* Dynamic overlay for extra shimmer — intensified for artist-art */
  .dynamic-gradient {
    position: fixed;
    inset: 0;
    pointer-events: none;
-   z-index: 0;
+   z-index: 1;
    mix-blend-mode: screen;
-   background: linear-gradient(115deg, rgba(124,111,240,0.03), rgba(118,215,255,0.02) 30%, rgba(255,255,255,0.01));
-   filter: blur(18px) saturate(110%);
-   opacity: 0.85;
-   animation: slow-rotate 28s linear infinite;
+   background: radial-gradient(40% 40% at 10% 20%, rgba(125,106,247,0.12), transparent 12%),
+               radial-gradient(30% 30% at 80% 75%, rgba(120,216,255,0.10), transparent 14%),
+               linear-gradient(115deg, rgba(255,255,255,0.02), rgba(124,111,240,0.04) 30%, rgba(118,215,255,0.03));
+   filter: blur(22px) saturate(140%);
+   opacity: 0.95;
+   animation: slow-rotate 22s linear infinite, overlay-pulse 9s ease-in-out infinite;
  }
- 
- @keyframes slow-rotate {
-   from { transform: rotate(0deg) scale(1.01); }
-   to { transform: rotate(360deg) scale(1.01); }
- }
+
+ @keyframes slow-rotate { from { transform: rotate(0deg) scale(1.01); } to { transform: rotate(360deg) scale(1.01); } }
+ @keyframes overlay-pulse { 0% { opacity: 0.88 } 50% { opacity: 1 } 100% { opacity: 0.88 } }
+
+ /* Particle canvas sits behind overlay but above base background */
+ .particle-canvas { position: fixed; inset: 0; z-index: 0; pointer-events: none; display: block; }
+
+ /* stronger brand and button neon */
+ .brand-text { text-shadow: 0 6px 22px rgba(125,106,247,0.28); }
+ .primary-btn { background: linear-gradient(135deg, rgba(255,95,165,0.96), rgba(124,111,240,0.98)); color: #07131d; box-shadow: 0 22px 60px rgba(255,95,165,0.14), inset 0 1px 0 rgba(255,255,255,0.05); }
+ .pill-btn.primary { background: linear-gradient(135deg, rgba(255,95,165,0.92), rgba(120,216,255,0.9)); color: #07131d; box-shadow: 0 18px 48px rgba(255,95,165,0.12); }
+
+ /* Bubbles with animated gradient band (subtle, no moving text) */
+ .bubble { background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border: 1px solid rgba(255,255,255,0.04); }
+ .bubble::after { content: ""; position: absolute; inset: 0; border-radius: 14px; background: linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,95,165,0.04), rgba(124,111,240,0.03)); mix-blend-mode: overlay; pointer-events: none; opacity: 0.28; background-size: 250% 100%; animation: bubble-band 10s linear infinite; }
+ @keyframes bubble-band { 0% { background-position: 0% 0% } 50% { background-position: 100% 0% } 100% { background-position: 0% 0% } }
+
+ /* stronger neon glow for mention */
+ .mention-highlight { box-shadow: 0 8px 40px rgba(255,95,165,0.14) inset, 0 6px 28px rgba(124,111,240,0.12); border: 1px solid rgba(255,95,165,0.08); }
+
+ /* make text bolder and more contrast for readability */
+ .message-input, .text-input { color: var(--text-main); font-weight: 600; }
+ .message-input::placeholder { color: rgba(237,244,255,0.6); }
+
+ /* ensure UI layers */
+ .dynamic-gradient { z-index: 1; }
+ .app-shell, .connect-card, .glass-panel { position: relative; z-index: 2; }
 
 .hidden { display: none !important; }
 
