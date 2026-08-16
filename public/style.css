@@ -444,15 +444,57 @@ button, input, select { font: inherit; }
   min-width: 0;
   overflow: hidden;
   min-height: 420px;
-  /* fully dark dynamic chat background — darker base with subtle dynamic radial tint */
-  background:
-    radial-gradient(circle at var(--g3x)% var(--g3y)%, rgba(30,30,40,0.06), transparent 18%),
-    linear-gradient(180deg, #000000 0%, #040406 100%);
-  border: 1px solid rgba(255,255,255,0.04);
+  background: #000; /* pure black base */
+  border: 1px solid rgba(255,255,255,0.02);
   border-radius: 32px;
 }
 
 /* Disable hover 'lift' and heavy shadows globally to keep text readable */
+.app-shell:hover, .connect-card:hover,
+.pill-btn:hover, .primary-btn:hover, .pill-btn.secondary:hover, .pill-btn.ghost:hover,
+.msg-row:hover .bubble, .reaction-pill:hover, .online-list li:hover,
+.msg-row:hover .msg-actions, .msg-action-btn:hover, .emoji-picker-opt:hover,
+.profile-trigger:hover, .call-trigger-btn:hover {
+  transform: none !important;
+  box-shadow: none !important;
+  filter: none !important;
+}
+
+/* Force true-black surfaces when dark theme is active */
+:root[data-theme="dark"] .app-shell,
+:root[data-theme="dark"] .glass-panel,
+:root[data-theme="dark"] .topbar-glass,
+:root[data-theme="dark"] .connect-card,
+:root[data-theme="dark"] .incoming-call-card,
+:root[data-theme="dark"] .chat,
+:root[data-theme="dark"] .messages,
+:root[data-theme="dark"] .message-input,
+:root[data-theme="dark"] .text-input,
+:root[data-theme="dark"] .sidebar,
+:root[data-theme="dark"] .sidebar-overlay {
+  background: #000 !important;
+  color: var(--text-main) !important;
+  border-color: rgba(255,255,255,0.02) !important;
+}
+
+/* Message bubbles — fully dark with high contrast text */
+:root[data-theme="dark"] .bubble {
+  background: rgba(0,0,0,0.76) !important;
+  border: 1px solid rgba(255,255,255,0.02) !important;
+  color: var(--text-main) !important;
+  box-shadow: none !important;
+}
+:root[data-theme="dark"] .bubble::after { opacity: 0 !important; }
+
+/* Ensure messages area uses black background and text */
+:root[data-theme="dark"] .messages { background: transparent !important; color: var(--text-main) !important; }
+:root[data-theme="dark"] .msg-row { color: var(--text-main) !important; }
+
+/* Dynamic overlay off for normal visual theme, enabled only for artist */
+:root[data-visual="normal"] .dynamic-gradient { display: none !important; }
+:root[data-visual="normal"] .particle-canvas { display: none !important; }
+:root[data-visual="artist"] .dynamic-gradient { display: block !important; }
+:root[data-visual="artist"] .particle-canvas { display: block !important; }
 .app-shell:hover, .connect-card:hover,
 .pill-btn:hover, .primary-btn:hover, .pill-btn.secondary:hover, .pill-btn.ghost:hover,
 .msg-row:hover .bubble, .reaction-pill:hover, .online-list li:hover,
