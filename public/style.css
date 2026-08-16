@@ -20,14 +20,32 @@
 html, body {
   margin: 0;
   height: 100%;
+  --g1x: 12; --g1y: 12; --g2x: 82; --g2y: 88; --g3x: 50; --g3y: 100;
   background:
-    radial-gradient(circle at 12% 12%, rgba(125, 106, 247, 0.22), transparent 24%),
-    radial-gradient(circle at 82% 88%, rgba(120, 216, 255, 0.15), transparent 26%),
-    radial-gradient(circle at 50% 100%, rgba(94, 130, 255, 0.12), transparent 25%),
-    #03070d;
+    radial-gradient(circle at var(--g1x)% var(--g1y)%, rgba(125, 106, 247, 0.24), transparent 22%),
+    radial-gradient(circle at var(--g2x)% var(--g2y)%, rgba(120, 216, 255, 0.14), transparent 28%),
+    radial-gradient(circle at var(--g3x)% var(--g3y)%, rgba(94, 130, 255, 0.10), transparent 26%),
+    #02040a;
   color: var(--text-main);
   font-family: "Inter", -apple-system, sans-serif;
   overflow: hidden;
+ }
+
+ /* Dynamic overlay for extra shimmer */
+ .dynamic-gradient {
+   position: fixed;
+   inset: 0;
+   pointer-events: none;
+   z-index: 0;
+   mix-blend-mode: screen;
+   background: linear-gradient(115deg, rgba(124,111,240,0.06), rgba(118,215,255,0.04) 30%, rgba(255,255,255,0.02));
+   filter: blur(30px) saturate(120%);
+   animation: slow-rotate 18s linear infinite;
+ }
+
+ @keyframes slow-rotate {
+   from { transform: rotate(0deg) scale(1.02); }
+   to { transform: rotate(360deg) scale(1.02); }
  }
 
 .hidden { display: none !important; }
@@ -180,6 +198,91 @@ button, input, select { font: inherit; }
 .auth-switch a:hover { text-decoration: underline; }
 
 /* ---------- Основной интерфейс ---------- */
+
+/* Glass sheen for panels */
+.glass-panel::after,
+.topbar-glass::after,
+.connect-card::after,
+.incoming-call-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,255,255,0.07) 30%, rgba(255,255,255,0.03));
+  transform: translateX(-110%);
+  opacity: 0.8;
+  mix-blend-mode: overlay;
+  animation: sheen 5s linear infinite;
+}
+
+@keyframes sheen {
+  0% { transform: translateX(-120%) skewX(-6deg); opacity: 0.0; }
+  10% { opacity: 0.14; }
+  50% { transform: translateX(120%) skewX(-6deg); opacity: 0.06; }
+  90% { opacity: 0.14; }
+  100% { transform: translateX(240%) skewX(-6deg); opacity: 0.0; }
+}
+
+/* Floating subtle motion for panels */
+.app-shell, .connect-card {
+  transform-origin: center;
+  animation: floaty 8s ease-in-out infinite;
+}
+@keyframes floaty {
+  0% { transform: translateY(0px) scale(1); }
+  50% { transform: translateY(-6px) scale(1.002); }
+  100% { transform: translateY(0px) scale(1); }
+}
+
+/* Buttons: glass + glow + ripple */
+.pill-btn, .primary-btn, .call-trigger-btn, .call-control-btn {
+  transition: transform 0.18s cubic-bezier(.2,.9,.3,1), box-shadow 0.18s ease, background 0.18s ease;
+}
+.pill-btn:active, .primary-btn:active { transform: translateY(0) scale(0.995); }
+.pill-btn:hover, .primary-btn:hover { transform: translateY(-2px) scale(1.01); box-shadow: 0 20px 60px rgba(125,106,247,0.16); }
+
+/* Bubbles: soft gradient and float */
+.bubble {
+  transition: transform 0.22s ease, box-shadow 0.22s ease;
+  position: relative;
+}
+.msg-row:hover .bubble { transform: translateY(-4px); box-shadow: 0 18px 40px rgba(2,6,14,0.6); }
+
+/* Message glow on mention */
+.mention-highlight { box-shadow: 0 6px 28px rgba(124,111,240,0.12) inset; border: 1px solid rgba(124,111,240,0.08); }
+
+/* Animated emoji picker & reactions */
+.reaction-pill { transition: transform 0.14s ease; }
+.reaction-pill:hover { transform: translateY(-4px) scale(1.03); }
+
+/* Members floating panel */
+.sidebar.open { transform: translateY(-6px); transition: transform 0.3s cubic-bezier(.2,.9,.3,1); }
+.online-list li { transition: transform 0.25s ease, box-shadow 0.25s ease; }
+.online-list li:hover { transform: translateX(6px); box-shadow: 0 8px 26px rgba(2,6,14,0.6); }
+
+/* Decorative animated gradients inside bubbles for 'perelivayushchie' effect */
+.bubble::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  background: linear-gradient(120deg, rgba(125,106,247,0.04), rgba(120,216,255,0.02));
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  opacity: 0.85;
+  transform-origin: center;
+  animation: bubble-flow 12s linear infinite;
+}
+@keyframes bubble-flow {
+  0% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-6px) rotate(4deg); }
+  100% { transform: translateY(0) rotate(0deg); }
+}
+
+/* subtle scrollbar style */
+.messages::-webkit-scrollbar { width: 10px; }
+.messages::-webkit-scrollbar-thumb { background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)); border-radius: 10px; }
 
 .app {
   display: flex;
@@ -841,6 +944,10 @@ button, input, select { font: inherit; }
   .messages { padding: 16px 14px; }
   .message-form { padding: 12px 12px 16px; }
 }
+
+/* Make sure dynamic overlay exists visually above background but behind UI */
+.dynamic-gradient { z-index: 1; }
+.app-shell, .connect-card, .glass-panel { position: relative; z-index: 2; }
 
 :root[data-theme="light"] {
   --bg-main: #eef3ff;
