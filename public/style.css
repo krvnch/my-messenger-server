@@ -33,20 +33,21 @@ html, body {
   overflow: hidden;
  }
 
- /* Dynamic overlay for extra shimmer — intensified for artist-art */
+ /* Dynamic overlay for extra shimmer — toned down for true dark theme */
  .dynamic-gradient {
    position: fixed;
    inset: 0;
    pointer-events: none;
    z-index: 1;
-   mix-blend-mode: screen;
-   background: radial-gradient(40% 40% at 10% 20%, rgba(125,106,247,0.12), transparent 12%),
-               radial-gradient(30% 30% at 80% 75%, rgba(120,216,255,0.10), transparent 14%),
-               linear-gradient(115deg, rgba(255,255,255,0.02), rgba(124,111,240,0.04) 30%, rgba(118,215,255,0.03));
-   filter: blur(22px) saturate(140%);
-   opacity: 0.95;
-   animation: slow-rotate 22s linear infinite, overlay-pulse 9s ease-in-out infinite;
- }
+    /* multiply darkens instead of brightening the base */
+    mix-blend-mode: multiply;
+    background: radial-gradient(40% 40% at 10% 20%, rgba(125,106,247,0.06), transparent 14%),
+                radial-gradient(30% 30% at 80% 75%, rgba(120,216,255,0.04), transparent 16%),
+                linear-gradient(115deg, rgba(0,0,0,0.02), rgba(124,111,240,0.03) 30%, rgba(0,0,0,0.02));
+    filter: blur(12px) saturate(100%);
+    opacity: 0.28;
+    animation: slow-rotate 22s linear infinite, overlay-pulse 18s ease-in-out infinite;
+  }
 
  @keyframes slow-rotate { from { transform: rotate(0deg) scale(1.01); } to { transform: rotate(360deg) scale(1.01); } }
  @keyframes overlay-pulse { 0% { opacity: 0.88 } 50% { opacity: 1 } 100% { opacity: 0.88 } }
@@ -60,8 +61,8 @@ html, body {
  .pill-btn.primary { background: linear-gradient(135deg, rgba(255,95,165,0.92), rgba(120,216,255,0.9)); color: #07131d; box-shadow: 0 18px 48px rgba(255,95,165,0.12); }
 
  /* Bubbles with animated gradient band (subtle, no moving text) */
- .bubble { background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border: 1px solid rgba(255,255,255,0.04); }
- .bubble::after { content: ""; position: absolute; inset: 0; border-radius: 14px; background: linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,95,165,0.04), rgba(124,111,240,0.03)); mix-blend-mode: overlay; pointer-events: none; opacity: 0.28; background-size: 250% 100%; animation: bubble-band 10s linear infinite; }
+ .bubble { background: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.005)); border: 1px solid rgba(255,255,255,0.03); }
+ .bubble::after { content: ""; position: absolute; inset: 0; border-radius: 14px; background: linear-gradient(90deg, rgba(255,255,255,0.01), rgba(255,95,165,0.02), rgba(124,111,240,0.02)); mix-blend-mode: normal; pointer-events: none; opacity: 0.08; background-size: 250% 100%; animation: bubble-band 10s linear infinite; }
  @keyframes bubble-band { 0% { background-position: 0% 0% } 50% { background-position: 100% 0% } 100% { background-position: 0% 0% } }
 
  /* stronger neon glow for mention */
@@ -236,11 +237,13 @@ button, input, select { font: inherit; }
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  background: linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,255,255,0.07) 30%, rgba(255,255,255,0.03));
+  /* much subtler sheen for dark mode */
+  background: linear-gradient(90deg, rgba(255,255,255,0.01), rgba(255,255,255,0.02) 30%, rgba(255,255,255,0.01));
   transform: translateX(-110%);
-  opacity: 0.8;
-  mix-blend-mode: overlay;
-  animation: sheen 5s linear infinite;
+  opacity: 0.32;
+  mix-blend-mode: normal;
+  animation: sheen 8s linear infinite;
+}
 }
 
 @keyframes sheen {
