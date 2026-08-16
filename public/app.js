@@ -188,6 +188,34 @@ themeToggleBtn.addEventListener("click", () => {
   applyTheme(next);
 });
 
+// Dynamic gradient animator: smoothly updates CSS variables to make background shimmer
+function startDynamicUI() {
+  let t0 = performance.now();
+  function frame(t) {
+    const dt = (t - t0) / 1000;
+    // gentle Lissajous-ish motion
+    const g1x = 12 + Math.cos(dt * 0.22) * 8 + Math.sin(dt * 0.13) * 6;
+    const g1y = 12 + Math.sin(dt * 0.17) * 6 + Math.cos(dt * 0.09) * 4;
+    const g2x = 82 + Math.sin(dt * 0.2) * 8 + Math.cos(dt * 0.11) * 5;
+    const g2y = 88 + Math.cos(dt * 0.15) * 6 + Math.sin(dt * 0.07) * 4;
+    const g3x = 50 + Math.sin(dt * 0.12) * 14;
+    const g3y = 100 + Math.cos(dt * 0.08) * 12;
+    document.documentElement.style.setProperty('--g1x', String(g1x));
+    document.documentElement.style.setProperty('--g1y', String(g1y));
+    document.documentElement.style.setProperty('--g2x', String(g2x));
+    document.documentElement.style.setProperty('--g2y', String(g2y));
+    document.documentElement.style.setProperty('--g3x', String(g3x));
+    document.documentElement.style.setProperty('--g3y', String(g3y));
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+// start dynamic UI after a short delay so initial paint is quick
+setTimeout(() => {
+  try { startDynamicUI(); } catch (e) { /* graceful fallback */ }
+}, 300);
+
 // ================= Звук нового сообщения =================
 let soundEnabled = localStorage.getItem("soundEnabled") !== "off";
 function updateSoundBtn() {
