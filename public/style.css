@@ -1,17 +1,17 @@
  :root {
-  --bg-main: #04070d;
-  --bg-panel: rgba(18, 24, 34, 0.68);
-  --bg-panel-strong: rgba(11, 15, 22, 0.82);
-  --bg-sidebar: rgba(12, 16, 24, 0.8);
-  --bg-elevated: rgba(25, 34, 48, 0.8);
-  --bg-input: rgba(255, 255, 255, 0.05);
+   --bg-main: #000000; /* fully black base for dark theme */
+   --bg-panel: rgba(6, 8, 12, 0.96);
+   --bg-panel-strong: rgba(3, 4, 6, 0.98);
+   --bg-sidebar: rgba(4, 6, 8, 0.98);
+   --bg-elevated: rgba(8, 10, 14, 0.95);
+   --bg-input: rgba(255, 255, 255, 0.03);
   --accent: #7d6af7;
-  --accent-soft: rgba(125, 106, 247, 0.2);
+   --accent-soft: rgba(125, 106, 247, 0.18);
   --accent-2: #78d8ff;
-  --text-main: #edf4ff;
+   --text-main: #f6f9ff;
   --text-muted: #9aa9c2;
-  --border: rgba(255, 255, 255, 0.1);
-  --shadow: 0 30px 90px rgba(2, 6, 12, 0.82);
+   --border: rgba(255, 255, 255, 0.06);
+   --shadow: 0 30px 90px rgba(0, 0, 0, 0.9);
   --radius: 18px;
 }
 
@@ -441,10 +441,30 @@ button, input, select { font: inherit; }
   min-width: 0;
   overflow: hidden;
   min-height: 420px;
-  background: linear-gradient(180deg, rgba(11, 16, 25, 0.84), rgba(7, 12, 18, 0.9));
-  border: 1px solid rgba(255,255,255,0.12);
+  /* fully dark dynamic chat background — darker base with subtle dynamic radial tint */
+  background:
+    radial-gradient(circle at var(--g3x)% var(--g3y)%, rgba(30,30,40,0.06), transparent 18%),
+    linear-gradient(180deg, #000000 0%, #040406 100%);
+  border: 1px solid rgba(255,255,255,0.04);
   border-radius: 32px;
 }
+
+/* Disable hover 'lift' and heavy shadows globally to keep text readable */
+.app-shell:hover, .connect-card:hover,
+.pill-btn:hover, .primary-btn:hover, .pill-btn.secondary:hover, .pill-btn.ghost:hover,
+.msg-row:hover .bubble, .reaction-pill:hover, .online-list li:hover,
+.msg-row:hover .msg-actions, .msg-action-btn:hover, .emoji-picker-opt:hover,
+.profile-trigger:hover, .call-trigger-btn:hover {
+  transform: none !important;
+  box-shadow: none !important;
+  filter: none !important;
+}
+
+/* Reduce subtle hover backgrounds to minimal for clarity */
+.online-list li:hover { background: transparent !important; }
+.pill-btn:hover { border-color: rgba(124,111,240,0.5); }
+.primary-btn:hover { filter: none !important; }
+.msg-row:hover .bubble { box-shadow: none !important; }
 
 .chat-header {
   height: 64px;
